@@ -47,14 +47,14 @@ async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
 }
 
 function CoverageMatrixView({ coverage }: { coverage: any }) {
-  // 你 2.2B 的 coverage 结构我不强行假设，先用“最安全的渲染”
-  // v0：优先显示常见的 counts / rows / cols，如果没有就直接 JSON 预览
-  const fact = coverage?.FACT ?? coverage?.fact;
-  const interp = coverage?.INTERPRETATION ?? coverage?.interpretation;
-  const comm = coverage?.COMMENTARY ?? coverage?.commentary;
+  // 兼容两种 schema：优先 counts，其次直接读 coverage
+  const counts = coverage?.counts ?? coverage ?? {};
 
-  const hasSimple =
-    typeof fact === "number" || typeof interp === "number" || typeof comm === "number";
+  const fact = Number(counts?.FACT ?? counts?.fact ?? 0);
+  const interp = Number(counts?.INTERPRETATION ?? counts?.interpretation ?? 0);
+  const comm = Number(counts?.COMMENTARY ?? counts?.commentary ?? 0);
+
+  const hasSimple = Number.isFinite(fact) || Number.isFinite(interp) || Number.isFinite(comm);
 
   return (
     <section style={{ marginTop: 16 }}>
@@ -63,13 +63,13 @@ function CoverageMatrixView({ coverage }: { coverage: any }) {
       {hasSimple ? (
         <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
           <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 10 }}>
-            <b>FACT</b>: {fact ?? 0}
+            <b>FACT</b>: {fact}
           </div>
           <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 10 }}>
-            <b>INTERPRETATION</b>: {interp ?? 0}
+            <b>INTERPRETATION</b>: {interp}
           </div>
           <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 10 }}>
-            <b>COMMENTARY</b>: {comm ?? 0}
+            <b>COMMENTARY</b>: {comm}
           </div>
         </div>
       ) : (
@@ -85,12 +85,21 @@ function CoverageMatrixView({ coverage }: { coverage: any }) {
             color: "#eee",
           }}
         >
-{JSON.stringify(coverage, null, 2)}
+          {safeStringify(coverage)}
         </pre>
       )}
     </section>
   );
 }
+
+function safeStringify(x: any) {
+  try {
+    return JSON.stringify(x, null, 2);
+  } catch (e: any) {
+    return `[Coverage stringify failed] ${e?.message ?? String(e)}`;
+  }
+}
+
 
 function GapHintsView({ gaps }: { gaps: any }) {
   // v0：默认折叠，避免焦虑
