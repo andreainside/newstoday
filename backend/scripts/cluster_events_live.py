@@ -1,4 +1,4 @@
-# backend/scripts/cluster_events.py
+# backend/scripts/cluster_events_live.py
 from __future__ import annotations
 
 
@@ -74,7 +74,7 @@ def get_recent_articles(db: Session, since: datetime, limit: int) -> List[dict]:
         WHERE a.published_at >= :since
           AND ea.article_id IS NULL            -- 只处理未链接文章（避免重复扫）
           AND a.embedding IS NOT NULL          -- 向量召回必须有 embedding
-        ORDER BY a.published_at DESC           -- 取最新的
+        ORDER BY a.published_at ASC, a.id ASC          -- 取最新的
         LIMIT :limit;
     """)
     rows = db.execute(q, {"since": since, "limit": limit}).mappings().all()

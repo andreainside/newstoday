@@ -1,6 +1,11 @@
 from fastapi import FastAPI
 
 app = FastAPI()
+print("[boot] main.py loaded")
+
+from app.api.events import router as events_router
+app.include_router(events_router, prefix="/api")
+print("[boot] events router included")
 
 
 @app.get("/")
@@ -24,8 +29,6 @@ def list_sources():
 from fastapi import FastAPI
 from database import SessionLocal
 from models import Source
-
-app = FastAPI()
 
 @app.get("/health")
 def health():
