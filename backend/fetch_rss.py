@@ -2,10 +2,11 @@ import feedparser
 from datetime import datetime
 from database import SessionLocal
 from models import Source, Article
+from sqlalchemy.dialects.postgresql import insert
 
 
 def parse_published(entry) -> datetime | None:
-    # feedparser 可能给 published_parsed（time.struct_time）
+    # feedparser 可能�?published_parsed（time.struct_time�?
     if getattr(entry, "published_parsed", None):
         t = entry.published_parsed
         return datetime(t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec)
@@ -30,6 +31,8 @@ def main(limit: int = 50):
                 continue
 
             inserted = 0
+            rows = []
+            seen_urls = set()
 
             for entry in feed.entries[:limit]:
                 title = getattr(entry, "title", "").strip()
@@ -40,20 +43,25 @@ def main(limit: int = 50):
                 if not url:
                     continue
 
-                # 去重：同链接不重复入库
-                exists = db.query(Article).filter(Article.url == url).first()
-                if exists:
+                if url in seen_urls:
                     continue
+                seen_urls.add(url)
 
-                a = Article(
-                    source_id=source.id,
-                    title=title[:500],
-                    url=url[:1000],
-                    summary=summary[:2000],
-                    published_at=published_at,
+                rows.append(
+                    {
+                        "source_id": source.id,
+                        "title": title[:500],
+                        "url": url[:1000],
+                        "summary": summary[:2000],
+                        "published_at": published_at,
+                    }
                 )
-                db.add(a)
-                inserted += 1
+
+            if rows:
+                stmt = insert(Article).values(rows)
+                stmt = stmt.on_conflict_do_nothing(index_elements=["url"])
+                result = db.execute(stmt)
+                inserted = int(result.rowcount or 0)
 
             # 每个 source 单独提交：一个源坏了不会拖累全部
             db.commit()
@@ -68,4 +76,3 @@ def main(limit: int = 50):
 
 if __name__ == "__main__":
     main()
-
