@@ -1,0 +1,53 @@
+name: update_live
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+concurrency:
+  group: update_live
+  cancel-in-progress: true
+
+jobs:
+  update_live:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/torch/sentence_transformers
+          key: hf-cache-${{ runner.os }}-py311-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            hf-cache-${{ runner.os }}-py311-
+
+      - name: Preflight DATABASE_URL
+        run: |
+          if [ -z "${{ secrets.DATABASE_URL }}" ]; then
+            echo "Missing DATABASE_URL secret"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Run live update
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PYTHONWARNINGS: "ignore::DeprecationWarning"
+        run: |
+          set -euo pipefail
+          python -m scripts.update_live --write
