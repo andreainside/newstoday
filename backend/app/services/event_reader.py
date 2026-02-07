@@ -10,6 +10,7 @@ from sqlalchemy.engine import Result
 
 # 重要：只用 app.database，避免你根目录 database.py / app/database.py 混用
 from app.database import SessionLocal
+from app.services.article_types import effective_type
 
 # v0 固定口径参数（稳定、可复现）
 WINDOW_HOURS = 72
@@ -80,7 +81,11 @@ SELECT
   a.article_type_reason,
   s.id AS source_id,
   s.name AS source_name,
-  s.url AS source_url
+  s.url AS source_url,
+  COALESCE(s.country, 'Unknown') AS source_country,
+  COALESCE(s.region, 'Unknown') AS source_region,
+  COALESCE(s.language, 'Unknown') AS source_language,
+  s.ownership_group AS source_ownership_group
 FROM event_articles ea
 JOIN articles a ON a.id = ea.article_id
 JOIN sources s ON s.id = a.source_id
@@ -163,11 +168,16 @@ def get_event_detail(event_id: int, diversity: int = 0, debug: bool = False) -> 
       "title": a["title"],
       "link": a["link"],
       "type": a["article_type"],
+      "effective_type": effective_type(a["article_type"]),
       "type_reason": a["article_type_reason"],
       "source": {
         "source_id": a["source_id"],
         "name": a["source_name"],
         "url": a["source_url"],
+        "country": a["source_country"],
+        "region": a["source_region"],
+        "language": a["source_language"],
+        "ownership_group": a["source_ownership_group"],
       },
     }
     for a in article_rows
@@ -247,7 +257,7 @@ def _apply_diversity_v0(
             sid = (a.get("source") or {}).get("source_id")
             if sid is not None:
                 cnt_source[sid] += 1
-            t = a.get("type")
+            t = a.get("effective_type") or a.get("type")
             if t is not None:
                 cnt_type[t] += 1
         dbg["distinct_sources_in_result"] = len(cnt_source)
@@ -296,11 +306,15 @@ def _apply_diversity_v0(
 
         # Priority 2: TYPE_COVERAGE (pick currently least represented type among remaining)
         if pick is None:
-            types_present = [a.get("type") for a in remaining if a.get("type") is not None]
+            types_present = [
+                a.get("effective_type") or a.get("type")
+                for a in remaining
+                if (a.get("effective_type") or a.get("type")) is not None
+            ]
             if types_present:
                 target_type = min(set(types_present), key=lambda t: cnt_type[t])
                 for a in remaining:
-                    if a.get("type") == target_type and can_take(a):
+                    if (a.get("effective_type") or a.get("type")) == target_type and can_take(a):
                         pick = a
                         reasons = ["TYPE_COVERAGE"]
                         break
@@ -324,7 +338,7 @@ def _apply_diversity_v0(
         sid = source_id_of(pick)
         if sid is not None:
             cnt_source[sid] += 1
-        t = pick.get("type")
+        t = pick.get("effective_type") or pick.get("type")
         if t is not None:
             cnt_type[t] += 1
 

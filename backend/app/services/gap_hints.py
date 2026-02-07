@@ -5,123 +5,175 @@
 from sqlalchemy import text
 from app.database import engine
 
+MIN_SOURCES_FOR_GAP = 3
+MIN_ARTICLES_FOR_GAP = 4
+GAP_TYPES = ["FACT", "INTERPRETATION", "COMMENTARY"]
 
-# v0 official whitelist: keep tiny & explicit; expand later if needed
-# We match against sources.url with ILIKE.
-OFFICIAL_URL_SUBSTRINGS = [
-    "un.org",
-    "whitehouse.gov",
-    "europa.eu",
-]
-
-SQL_GAP_BASE = """
-WITH base AS (
-  SELECT
-    ea.event_id,
-    COUNT(*) AS total_articles,
-    COUNT(DISTINCT a.source_id) AS distinct_sources,
-    SUM(CASE WHEN a.article_type='FACT' THEN 1 ELSE 0 END) AS fact_cnt,
-    SUM(CASE WHEN a.article_type='INTERPRETATION' THEN 1 ELSE 0 END) AS interpretation_cnt,
-    SUM(CASE WHEN a.article_type='COMMENTARY' THEN 1 ELSE 0 END) AS commentary_cnt,
-    SUM(
-      CASE
-        WHEN
-          -- official whitelist checks (expanded in python into OR clauses)
-          {official_url_or}
-        THEN 1 ELSE 0
-      END
-    ) AS official_hits
-  FROM event_articles ea
-  JOIN articles a ON a.id = ea.article_id
-  JOIN sources s ON s.id = a.source_id
-  WHERE ea.event_id = :event_id
-  GROUP BY ea.event_id
-)
+SQL_GAP_COUNTS = """
 SELECT
-  event_id,
-  total_articles,
-  distinct_sources,
-  fact_cnt,
-  interpretation_cnt,
-  commentary_cnt,
-  official_hits
-FROM base;
+  a.source_id,
+  s.name AS source_name,
+  CASE
+    WHEN a.article_type IS NULL OR a.article_type = 'DEFAULT_FACT' THEN 'FACT'
+    ELSE a.article_type
+  END AS effective_type,
+  COUNT(*) AS cnt
+FROM event_articles ea
+JOIN articles a ON a.id = ea.article_id
+JOIN sources s ON s.id = a.source_id
+WHERE ea.event_id = :event_id
+GROUP BY a.source_id, s.name, effective_type
+ORDER BY s.name, effective_type;
 """
-
-
-def _build_official_or_clause() -> str:
-    # produces: s.url ILIKE '%a%' OR s.url ILIKE '%b%' ...
-    parts = [f"s.url ILIKE '%{sub}%'" for sub in OFFICIAL_URL_SUBSTRINGS]
-    if not parts:
-        # never match
-        return "FALSE"
-    return " OR ".join(parts)
 
 
 def get_gap_hints(event_id: int) -> dict:
     """
     Returns gap hints for an event. Hints are non-judgmental.
-    Only 3 gaps in v0:
-      - GAP_OFFICIAL_MISSING
-      - GAP_SOURCE_CONCENTRATION (proxy for 'international' in v0 due to missing metadata)
-      - GAP_NO_ANALYSIS_OR_CRITIQUE
+    Gap codes (v0): MISSING_TYPES, DOMINANT_SOURCE
     """
-    sql = SQL_GAP_BASE.format(official_url_or=_build_official_or_clause())
-
     with engine.connect() as conn:
-        row = conn.execute(text(sql), {"event_id": event_id}).mappings().first()
+        rows = conn.execute(
+            text(SQL_GAP_COUNTS),
+            {"event_id": event_id},
+        ).mappings().all()
 
-    if not row:
-        # event has no articles
-        return {"event_id": event_id, "hints": []}
+    if not rows:
+        missing_types = list(GAP_TYPES)
+        evidence_summary = {
+            "total_articles": 0,
+            "distinct_sources": 0,
+            "type_counts": {t: 0 for t in GAP_TYPES},
+            "dominant_source_ratio": 0.0,
+            "dominant_source": {
+                "source_id": None,
+                "source_name": None,
+                "articles": 0,
+            },
+            "missing_types": missing_types,
+            "thresholds": {
+                "min_sources_for_gap": MIN_SOURCES_FOR_GAP,
+                "min_articles_for_gap": MIN_ARTICLES_FOR_GAP,
+            },
+            "reason": "no_articles",
+        }
+        return {
+            "event_id": event_id,
+            "status": "INSUFFICIENT_DATA",
+            "message": "Insufficient data to assess gaps yet.",
+            "gaps": [],
+            "gap_codes": [],
+            "hints": [],
+            "evidence_summary": evidence_summary,
+        }
 
-    total_articles = int(row["total_articles"])
-    distinct_sources = int(row["distinct_sources"])
-    interpretation_cnt = int(row["interpretation_cnt"])
-    commentary_cnt = int(row["commentary_cnt"])
-    official_hits = int(row["official_hits"])
+    type_counts = {t: 0 for t in GAP_TYPES}
+    source_counts = {}
+    source_names = {}
+    total_articles = 0
 
-    hints = []
+    for r in rows:
+        etype = r["effective_type"]
+        cnt = int(r["cnt"])
+        total_articles += cnt
+        if etype in type_counts:
+            type_counts[etype] += cnt
+        sid = int(r["source_id"])
+        source_counts[sid] = source_counts.get(sid, 0) + cnt
+        source_names[sid] = r["source_name"]
 
-    # Gap A: missing official/primary statements (conservative)
-    if total_articles >= 4 and distinct_sources >= 2 and official_hits == 0:
-        hints.append(
+    distinct_sources = len(source_counts)
+    dominant_source_id = None
+    dominant_source_articles = 0
+    dominant_source_name = None
+    if source_counts:
+        dominant_source_id = max(source_counts, key=lambda k: source_counts[k])
+        dominant_source_articles = source_counts[dominant_source_id]
+        dominant_source_name = source_names.get(dominant_source_id)
+    dominant_source_ratio = (
+        float(dominant_source_articles) / float(total_articles)
+        if total_articles > 0
+        else 0.0
+    )
+    missing_types = [t for t, cnt in type_counts.items() if cnt == 0]
+
+    evidence_summary = {
+        "total_articles": total_articles,
+        "distinct_sources": distinct_sources,
+        "type_counts": type_counts,
+        "dominant_source_ratio": dominant_source_ratio,
+        "dominant_source": {
+            "source_id": dominant_source_id,
+            "source_name": dominant_source_name,
+            "articles": dominant_source_articles,
+        },
+        "missing_types": missing_types,
+        "thresholds": {
+            "min_sources_for_gap": MIN_SOURCES_FOR_GAP,
+            "min_articles_for_gap": MIN_ARTICLES_FOR_GAP,
+        },
+    }
+
+    if total_articles < MIN_ARTICLES_FOR_GAP or distinct_sources < MIN_SOURCES_FOR_GAP:
+        evidence_summary["reason"] = "below_thresholds"
+        return {
+            "event_id": event_id,
+            "status": "INSUFFICIENT_DATA",
+            "message": "Insufficient data to assess gaps yet.",
+            "gaps": [],
+            "gap_codes": [],
+            "hints": [],
+            "evidence_summary": evidence_summary,
+        }
+
+    gaps = []
+    if missing_types:
+        gaps.append(
             {
-                "code": "GAP_OFFICIAL_MISSING",
-                "message": "Hint: no official/primary statements detected among current sources.",
+                "code": "MISSING_TYPES",
+                "message": "Some article types are missing from current coverage.",
                 "evidence": {
+                    "missing_types": missing_types,
+                    "type_counts": type_counts,
                     "total_articles": total_articles,
                     "distinct_sources": distinct_sources,
-                    "official_hits": official_hits,
                 },
             }
         )
 
-    # Gap B: source concentration (v0 proxy; do NOT claim international)
-    if total_articles >= 4 and distinct_sources == 1:
-        hints.append(
+    if dominant_source_ratio > 0.6:
+        gaps.append(
             {
-                "code": "GAP_SOURCE_CONCENTRATION",
-                "message": "Hint: coverage currently comes from a single source; additional outlets may add context.",
+                "code": "DOMINANT_SOURCE",
+                "message": "Coverage is concentrated in a single source.",
                 "evidence": {
+                    "dominant_source_ratio": dominant_source_ratio,
+                    "dominant_source_id": dominant_source_id,
+                    "dominant_source_name": dominant_source_name,
+                    "dominant_source_articles": dominant_source_articles,
                     "total_articles": total_articles,
                     "distinct_sources": distinct_sources,
                 },
             }
         )
 
-    # Gap C: no analysis/critique detected (using article_type distribution)
-    if total_articles >= 5 and (interpretation_cnt + commentary_cnt) == 0:
-        hints.append(
-            {
-                "code": "GAP_NO_ANALYSIS_OR_CRITIQUE",
-                "message": "Hint: mostly straight reporting; little analysis/critique detected yet.",
-                "evidence": {
-                    "total_articles": total_articles,
-                    "interpretation_cnt": interpretation_cnt,
-                    "commentary_cnt": commentary_cnt,
-                },
-            }
-        )
+    if gaps:
+        status = "GAP_FOUND"
+        message = "Potential gaps detected."
+        evidence_summary["reason"] = "gap_found"
+    else:
+        status = "NO_GAP"
+        message = "No gaps detected at current thresholds."
+        evidence_summary["reason"] = "no_gap"
 
-    return {"event_id": event_id, "hints": hints}
+    gap_codes = [g["code"] for g in gaps]
+
+    return {
+        "event_id": event_id,
+        "status": status,
+        "message": message,
+        "gaps": gaps,
+        "gap_codes": gap_codes,
+        "hints": gaps,
+        "evidence_summary": evidence_summary,
+    }

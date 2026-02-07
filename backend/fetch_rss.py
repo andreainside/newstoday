@@ -1,3 +1,4 @@
+import json
 import feedparser
 from datetime import datetime
 from database import SessionLocal
@@ -6,7 +7,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 
 def parse_published(entry) -> datetime | None:
-    # feedparser 可能�?published_parsed（time.struct_time�?
+    # feedparser may expose published_parsed (time.struct_time)
     if getattr(entry, "published_parsed", None):
         t = entry.published_parsed
         return datetime(t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec)
@@ -22,53 +23,106 @@ def main(limit: int = 50):
             return
 
         total_inserted = 0
+        total_duplicates = 0
+        sources_total = len(sources)
+        sources_ok = 0
+        sources_failed = 0
+        failed_sources = []
 
         for source in sources:
-            feed = feedparser.parse(source.url)
+            try:
+                feed = feedparser.parse(source.url)
 
-            if getattr(feed, "bozo", False):
-                print(f" RSS parse error for {source.name}: {feed.bozo_exception}")
-                continue
-
-            inserted = 0
-            rows = []
-            seen_urls = set()
-
-            for entry in feed.entries[:limit]:
-                title = getattr(entry, "title", "").strip()
-                url = getattr(entry, "link", "").strip()
-                summary = getattr(entry, "summary", "").strip()
-                published_at = parse_published(entry)
-
-                if not url:
+                if getattr(feed, "bozo", False):
+                    err_obj = getattr(feed, "bozo_exception", None)
+                    err = str(err_obj or "unknown error")
+                    status_code = getattr(feed, "status", None)
+                    print(f" RSS parse error for {source.name}: {err}")
+                    sources_failed += 1
+                    failed_sources.append(
+                        {
+                            "source_id": source.id,
+                            "name": source.name,
+                            "url": source.url,
+                            "reason": "bozo",
+                            "status_code": status_code,
+                            "exception_type": type(err_obj).__name__ if err_obj else None,
+                            "error_short": err[:120],
+                        }
+                    )
                     continue
 
-                if url in seen_urls:
-                    continue
-                seen_urls.add(url)
+                inserted = 0
+                rows = []
+                seen_urls = set()
 
-                rows.append(
+                for entry in feed.entries[:limit]:
+                    title = getattr(entry, "title", "").strip()
+                    url = getattr(entry, "link", "").strip()
+                    summary = getattr(entry, "summary", "").strip()
+                    published_at = parse_published(entry)
+
+                    if not url:
+                        continue
+
+                    if url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+
+                    rows.append(
+                        {
+                            "source_id": source.id,
+                            "title": title[:500],
+                            "url": url[:1000],
+                            "summary": summary[:2000],
+                            "published_at": published_at,
+                        }
+                    )
+
+                if rows:
+                    stmt = insert(Article).values(rows)
+                    stmt = stmt.on_conflict_do_nothing(index_elements=["url"]).returning(Article.id)
+                    inserted = len(db.execute(stmt).fetchall())
+                    inserted = max(0, int(inserted))
+                    total_duplicates += max(0, len(rows) - inserted)
+
+                # commit per source to isolate failures
+                db.commit()
+                total_inserted += inserted
+                sources_ok += 1
+                print(f" Inserted {inserted} new articles from {source.name}.")
+            except Exception as e:
+                db.rollback()
+                sources_failed += 1
+                err = str(e)
+                failed_sources.append(
                     {
                         "source_id": source.id,
-                        "title": title[:500],
-                        "url": url[:1000],
-                        "summary": summary[:2000],
-                        "published_at": published_at,
+                        "name": source.name,
+                        "url": source.url,
+                        "reason": "exception",
+                        "status_code": None,
+                        "exception_type": type(e).__name__,
+                        "error_short": err[:120],
                     }
                 )
+                print(f" RSS fetch error for {source.name}: {err}")
 
-            if rows:
-                stmt = insert(Article).values(rows)
-                stmt = stmt.on_conflict_do_nothing(index_elements=["url"])
-                result = db.execute(stmt)
-                inserted = int(result.rowcount or 0)
-
-            # 每个 source 单独提交：一个源坏了不会拖累全部
-            db.commit()
-            total_inserted += inserted
-            print(f" Inserted {inserted} new articles from {source.name}.")
-
+        top_failed_sources = failed_sources[:5]
+        print(" Health Summary:")
+        print(f"  sources_total={sources_total} sources_ok={sources_ok} sources_failed={sources_failed}")
+        print(f"  articles_inserted={total_inserted} articles_duplicate={total_duplicates}")
+        print(f"  top_failed_sources={top_failed_sources}")
         print(f" Done. Total inserted = {total_inserted}.")
+        summary = {
+            "sources_total": sources_total,
+            "sources_ok": sources_ok,
+            "sources_failed": sources_failed,
+            "articles_inserted": total_inserted,
+            "articles_duplicate": total_duplicates,
+            "failed_sources": failed_sources,
+        }
+        print(json.dumps(summary, ensure_ascii=False))
 
     finally:
         db.close()

@@ -7,6 +7,10 @@ class Source(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     url = Column(String, nullable=False)
+    country = Column(String, nullable=True)
+    region = Column(String, nullable=True)
+    language = Column(String, nullable=True)
+    ownership_group = Column(String, nullable=True)
 
 from sqlalchemy import String, Integer, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship

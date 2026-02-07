@@ -10,15 +10,18 @@ SELECT
   ea.event_id,
   s.id   AS source_id,
   s.name AS source_name,
-  a.article_type,
+  CASE
+    WHEN a.article_type IS NULL OR a.article_type = 'DEFAULT_FACT' THEN 'FACT'
+    ELSE a.article_type
+  END AS effective_type,
   COUNT(*) AS cnt,
   ARRAY_AGG(a.id ORDER BY a.published_at DESC NULLS LAST) AS article_ids
 FROM event_articles ea
 JOIN articles a ON a.id = ea.article_id
 JOIN sources  s ON s.id = a.source_id
 WHERE ea.event_id = :event_id
-GROUP BY ea.event_id, s.id, s.name, a.article_type
-ORDER BY s.name, a.article_type;
+GROUP BY ea.event_id, s.id, s.name, effective_type
+ORDER BY s.name, effective_type;
 """
 
 
@@ -33,7 +36,7 @@ def get_coverage_matrix(event_id: int) -> dict:
         ).mappings().all()
 
     rows_by_source = {}
-    totals = {"FACT": 0, "INTERPRETATION": 0, "COMMENTARY": 0,"UNKNOWN": 0,}
+    totals = {"FACT": 0, "INTERPRETATION": 0, "COMMENTARY": 0}
 
     for r in rows:
         sid = r["source_id"]
@@ -49,12 +52,10 @@ def get_coverage_matrix(event_id: int) -> dict:
                 },
             }
 
-        atype = r["article_type"]
-        rows_by_source[sid]["counts"][atype] = r["cnt"]
-        rows_by_source[sid]["article_ids"][atype] = list(r["article_ids"])
-        atype = r.get("article_type")  # 或 r["article_type"]，看你原来怎么写
-        atype = atype or "UNKNOWN"
-        totals[atype] += r["cnt"]
+        etype = r["effective_type"]
+        rows_by_source[sid]["counts"][etype] = r["cnt"]
+        rows_by_source[sid]["article_ids"][etype] = list(r["article_ids"])
+        totals[etype] += r["cnt"]
 
     return {
         "event_id": event_id,
