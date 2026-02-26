@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+# RECONSTRUCTED_FROM_PYC_SYMBOLS
+# EVIDENCE: pyc symbol extraction on 2026-02-26
+# 哪些行为是占位，哪些是证据确认: 占位=所有算法与输出内容; 证据确认=脚本/模块名来自 pyc 文件名
 """
-RECONSTRUCTED_FROM_PYC_CLUES
-Minimal reconstructed version from pyc symbol/flag clues.
+Minimal reconstructed placeholder for judge_event_merge_suggestions_v1.
 """
 from __future__ import annotations
 
@@ -10,7 +12,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 
-RECONSTRUCTED_FROM_PYC_CLUES = True
+RECONSTRUCTED_FROM_PYC_SYMBOLS = True
 JUDGE_VERSION = "v1-reconstructed-minimal"
 MOCK_SCORE = 0.91
 SUGGEST_MERGE = "SUGGEST_MERGE"
@@ -90,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
 
     payload = {
         "mode": "minimal_reconstructed",
-        "reconstructed": RECONSTRUCTED_FROM_PYC_CLUES,
+        "reconstructed": RECONSTRUCTED_FROM_PYC_SYMBOLS,
         "judge_version": JUDGE_VERSION,
         "input_event_ids": event_ids,
         "since_days": args.since_days,
