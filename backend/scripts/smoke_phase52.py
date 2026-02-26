@@ -55,9 +55,11 @@ def main() -> int:
             name="build_event_signatures_v0",
             args=["--dry-run", "--mock-llm"],
             required_keywords=[
-                "PHASE52_LOG",
-                "script=build_event_signatures_v0",
-                "mode=DRY_RUN",
+                "[done] build_event_signatures_v0",
+                "scanned=",
+                "updated=",
+                "empty_signature_count=",
+                "nonempty_signature_count=",
             ],
         ),
         ScriptSpec(
@@ -65,9 +67,7 @@ def main() -> int:
             name="gen_event_merge_candidates",
             args=["--dry-run", "--mock-llm"],
             required_keywords=[
-                "PHASE52_LOG",
-                "script=gen_event_merge_candidates",
-                "mode=DRY_RUN",
+                "event_id_a event_id_b score evidence_tokens top_overlap_weight",
             ],
         ),
         ScriptSpec(
@@ -75,9 +75,11 @@ def main() -> int:
             name="judge_event_merge_suggestions_v1",
             args=["--dry-run", "--mock-llm"],
             required_keywords=[
-                "PHASE52_LOG",
-                "script=judge_event_merge_suggestions_v1",
-                "mode=DRY_RUN",
+                "[warn] signature_v0 empty",
+                "[debug] candidates for",
+                "[done] suggestions=",
+                "llm_calls=",
+                "decision_path=RULE_RARE_TOKEN_STRONG",
             ],
         ),
     ]
