@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+# RECONSTRUCTED_FROM_PYC_SYMBOLS
+# EVIDENCE: pyc symbol extraction on 2026-02-26
+# 哪些行为是占位，哪些是证据确认: 占位=所有算法与输出内容; 证据确认=脚本/模块名来自 pyc 文件名
 """
-RECONSTRUCTED_FROM_PYC_CLUES
-Minimal reconstructed version from pyc symbol/flag clues.
+Minimal reconstructed placeholder for gen_event_merge_candidates.
 """
 from __future__ import annotations
 
@@ -12,7 +14,7 @@ import re
 import sys
 from datetime import datetime, timedelta, timezone
 
-RECONSTRUCTED_FROM_PYC_CLUES = True
+RECONSTRUCTED_FROM_PYC_SYMBOLS = True
 WORD_RE = re.compile(r"[A-Za-z0-9_]{2,}")
 
 
@@ -103,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     candidates = pairs[:topk]
     payload = {
         "mode": "minimal_reconstructed",
-        "reconstructed": RECONSTRUCTED_FROM_PYC_CLUES,
+        "reconstructed": RECONSTRUCTED_FROM_PYC_SYMBOLS,
         "since_days": args.since_days,
         "window_hours": args.window_hours,
         "topk": args.topk,
