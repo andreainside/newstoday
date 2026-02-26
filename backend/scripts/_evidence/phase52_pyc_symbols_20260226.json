@@ -1,0 +1,82 @@
+﻿[
+  {
+    "pyc": "E:\\NewsToday\\newstoday\\backend\\scripts\\__pycache__\\build_event_signatures_v0.cpython-313.pyc",
+    "exists": true,
+    "load_ok": true,
+    "error": null,
+    "module_name": "build_event_signatures_v0",
+    "entry_candidates": ["main"],
+    "dir_first_80": ["ACRONYM_RE","ACTION_WHITELIST","Counter","DEAD_RE","GENERIC_TOKEN_STOP","INMATES_RE","Iterable","KILLED_RE","KM_RE","LOCATION_TOKENS","List","M_RE","NUM_RE","ORG_EVENT_KEYWORDS","PATH_RE","PCT_RE","PHRASE_RE","QUOTE_RE","SINGLE_WORD_STOP","URL_RE","_add_keywords","_allow_token","_build_signature","_clean_token","_extract_from_text","_extract_from_title","annotations","argparse","engine","json","main","re","text"],
+    "callables": [
+      {"name":"Counter","kind":"class"},
+      {"name":"_add_keywords","kind":"function"},
+      {"name":"_allow_token","kind":"function"},
+      {"name":"_build_signature","kind":"function"},
+      {"name":"_clean_token","kind":"function"},
+      {"name":"_extract_from_text","kind":"function"},
+      {"name":"_extract_from_title","kind":"function"},
+      {"name":"main","kind":"function"},
+      {"name":"text","kind":"function"}
+    ],
+    "argparse_param_names": []
+  },
+  {
+    "pyc": "E:\\NewsToday\\newstoday\\backend\\scripts\\__pycache__\\gen_event_merge_candidates.cpython-313.pyc",
+    "exists": true,
+    "load_ok": true,
+    "error": null,
+    "module_name": "gen_event_merge_candidates",
+    "entry_candidates": ["main"],
+    "dir_first_80": ["Dict","EventRow","Iterable","List","Optional","Set","WORD_RE","_build_idf","_jaccard","_load_events","_overlap_or_gap_ok","_parse_signature","_title_tokens","_weighted_overlap","annotations","argparse","dataclass","datetime","engine","json","main","math","re","text","timedelta"],
+    "callables": [
+      {"name":"EventRow","kind":"class"},
+      {"name":"_build_idf","kind":"function"},
+      {"name":"_jaccard","kind":"function"},
+      {"name":"_load_events","kind":"function"},
+      {"name":"_overlap_or_gap_ok","kind":"function"},
+      {"name":"_parse_signature","kind":"function"},
+      {"name":"_title_tokens","kind":"function"},
+      {"name":"_weighted_overlap","kind":"function"},
+      {"name":"dataclass","kind":"function"},
+      {"name":"datetime","kind":"class"},
+      {"name":"main","kind":"function"},
+      {"name":"text","kind":"function"},
+      {"name":"timedelta","kind":"class"}
+    ],
+    "argparse_param_names": []
+  },
+  {
+    "pyc": "E:\\NewsToday\\newstoday\\backend\\scripts\\__pycache__\\judge_event_merge_suggestions_v1.cpython-313.pyc",
+    "exists": true,
+    "load_ok": true,
+    "error": null,
+    "module_name": "judge_event_merge_suggestions_v1",
+    "entry_candidates": ["main"],
+    "dir_first_80": ["Dict","EventRow","Iterable","JSON_BLOCK_RE","JUDGE_VERSION","List","Optional","Set","Tuple","WORD_RE","_build_df","_build_idf_from_df","_call_llm","_fetch_titles","_get_cached_judgement","_insert_suggestion","_jaccard","_load_events","_mock_llm","_ordered_pair","_overlap_or_gap_ok","_parse_llm_json","_parse_signature","_set_cached_judgement","_title_tokens","_weighted_overlap","annotations","argparse","dataclass","datetime","engine","json","main","math","os","re","text","timedelta"],
+    "callables": [
+      {"name":"EventRow","kind":"class"},
+      {"name":"_build_df","kind":"function"},
+      {"name":"_build_idf_from_df","kind":"function"},
+      {"name":"_call_llm","kind":"function"},
+      {"name":"_fetch_titles","kind":"function"},
+      {"name":"_get_cached_judgement","kind":"function"},
+      {"name":"_insert_suggestion","kind":"function"},
+      {"name":"_jaccard","kind":"function"},
+      {"name":"_load_events","kind":"function"},
+      {"name":"_mock_llm","kind":"function"},
+      {"name":"_ordered_pair","kind":"function"},
+      {"name":"_overlap_or_gap_ok","kind":"function"},
+      {"name":"_parse_llm_json","kind":"function"},
+      {"name":"_parse_signature","kind":"function"},
+      {"name":"_set_cached_judgement","kind":"function"},
+      {"name":"_title_tokens","kind":"function"},
+      {"name":"_weighted_overlap","kind":"function"},
+      {"name":"dataclass","kind":"function"},
+      {"name":"datetime","kind":"class"},
+      {"name":"main","kind":"function"},
+      {"name":"text","kind":"function"},
+      {"name":"timedelta","kind":"class"}
+    ],
+    "argparse_param_names": []
+  }
+]
