@@ -31,6 +31,10 @@ WORD_RE = re.compile(r"[A-Za-z0-9_]{2,}")
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build simple event signatures (v0, reconstructed).")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="Default mode; do not write to DB.")
+    mode.add_argument("--write-db", action="store_true", help="Enable DB writes (requires --db-url).")
+    parser.add_argument("--db-url", default="", help="DB connection string used only with --write-db.")
     parser.add_argument("--since-days", type=int, default=7, help="Lookback window in days.")
     parser.add_argument("--limit-events", type=int, default=200, help="Maximum events to process.")
     parser.add_argument("--top-n", type=int, default=8, help="Top N tokens kept in signature.")
@@ -65,9 +69,34 @@ def _mock_events(limit_events: int) -> Iterable[dict]:
         }
 
 
+def _log(event: str, **fields: object) -> None:
+    parts = [
+        "PHASE52_LOG",
+        "script=build_event_signatures_v0",
+        f"event={event}",
+    ]
+    for key, value in fields.items():
+        parts.append(f"{key}={value}")
+    sys.stderr.write(" ".join(parts) + "\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    dry_run = True if not args.write_db else False
+    if args.dry_run:
+        dry_run = True
+    db_enabled = bool(args.write_db and args.db_url)
+    if args.write_db and not args.db_url:
+        _log("warning", mode="WRITE_DB", db_enabled=False, detail="missing_db_url")
+
     since_ts = (datetime.now(timezone.utc) - timedelta(days=max(0, args.since_days))).isoformat()
+    _log(
+        "start",
+        mode="DRY_RUN" if dry_run else "WRITE_DB",
+        mock_data=True,
+        db_enabled=db_enabled,
+        since_days=args.since_days,
+    )
 
     rows = []
     for event in _mock_events(args.limit_events):
@@ -84,6 +113,9 @@ def main(argv: list[str] | None = None) -> int:
     payload = {
         "mode": "minimal_reconstructed",
         "reconstructed": RECONSTRUCTED_FROM_PYC_SYMBOLS,
+        "dry_run": dry_run,
+        "write_db": bool(args.write_db),
+        "db_enabled": db_enabled,
         "since_days": args.since_days,
         "since_ts": since_ts,
         "limit_events": args.limit_events,
@@ -91,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         "nonempty_signature_count": sum(1 for r in rows if r["signature_v0"]),
         "events": rows,
     }
+    _log("complete", mode="DRY_RUN" if dry_run else "WRITE_DB", rows=len(rows))
     json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
     return 0
