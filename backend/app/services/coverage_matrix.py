@@ -36,6 +36,7 @@ def get_coverage_matrix(event_id: int) -> dict:
         ).mappings().all()
 
     rows_by_source = {}
+    totals = {"FACT": 0, "INTERPRETATION": 0, "COMMENTARY": 0, "UNKNOWN": 0}
     totals = {"FACT": 0, "INTERPRETATION": 0, "COMMENTARY": 0}
 
     for r in rows:
@@ -44,14 +45,19 @@ def get_coverage_matrix(event_id: int) -> dict:
             rows_by_source[sid] = {
                 "source_id": sid,
                 "source_name": r["source_name"],
-                "counts": {"FACT": 0, "INTERPRETATION": 0, "COMMENTARY": 0},
+                "counts": {"FACT": 0, "INTERPRETATION": 0, "COMMENTARY": 0, "UNKNOWN": 0},
                 "article_ids": {
                     "FACT": [],
                     "INTERPRETATION": [],
                     "COMMENTARY": [],
+                    "UNKNOWN": [],
                 },
             }
 
+        atype = r.get("article_type") or "UNKNOWN"
+        rows_by_source[sid]["counts"][atype] = r["cnt"]
+        rows_by_source[sid]["article_ids"][atype] = list(r["article_ids"])
+        totals[atype] += r["cnt"]
         etype = r["effective_type"]
         rows_by_source[sid]["counts"][etype] = r["cnt"]
         rows_by_source[sid]["article_ids"][etype] = list(r["article_ids"])
@@ -59,7 +65,7 @@ def get_coverage_matrix(event_id: int) -> dict:
 
     return {
         "event_id": event_id,
-        "types": ["FACT", "INTERPRETATION", "COMMENTARY"],
+        "types": ["FACT", "INTERPRETATION", "COMMENTARY", "UNKNOWN"],
         "rows": list(rows_by_source.values()),
         "totals": totals,
     }
