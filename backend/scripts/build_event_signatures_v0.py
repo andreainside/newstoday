@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+# RECONSTRUCTED_FROM_PYC_SYMBOLS
+# EVIDENCE: pyc symbol extraction on 2026-02-26
+# 哪些行为是占位，哪些是证据确认: 占位=所有算法与输出内容; 证据确认=脚本/模块名来自 pyc 文件名
 """
-RECONSTRUCTED_FROM_PYC_CLUES
-Minimal reconstructed version from pyc symbol/flag clues.
+Minimal reconstructed placeholder for build_event_signatures_v0.
 """
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
-RECONSTRUCTED_FROM_PYC_CLUES = True
+RECONSTRUCTED_FROM_PYC_SYMBOLS = True
 ORG_EVENT_KEYWORDS = {
     "police",
     "court",
@@ -81,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
 
     payload = {
         "mode": "minimal_reconstructed",
-        "reconstructed": RECONSTRUCTED_FROM_PYC_CLUES,
+        "reconstructed": RECONSTRUCTED_FROM_PYC_SYMBOLS,
         "since_days": args.since_days,
         "since_ts": since_ts,
         "limit_events": args.limit_events,
