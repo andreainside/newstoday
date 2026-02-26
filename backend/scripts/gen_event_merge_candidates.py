@@ -24,6 +24,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     mode.add_argument("--dry-run", action="store_true", help="Default mode; do not write to DB.")
     mode.add_argument("--write-db", action="store_true", help="Enable DB writes (requires --db-url).")
     parser.add_argument("--db-url", default="", help="DB connection string used only with --write-db.")
+    parser.add_argument("--mock-llm", action="store_true", help="No-op flag for interface parity.")
     parser.add_argument("--event-ids", default="", help="Comma separated event ids, e.g. 101,102,103.")
     parser.add_argument("--no-title-jaccard", action="store_true", help="Disable title jaccard in score.")
     parser.add_argument("--since-days", type=int, default=7, help="Lookback window in days.")
@@ -103,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         "start",
         mode="DRY_RUN" if dry_run else "WRITE_DB",
         mock_data=True,
+        mock_llm=bool(args.mock_llm),
         db_enabled=db_enabled,
         since_days=args.since_days,
     )
@@ -138,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         "dry_run": dry_run,
         "write_db": bool(args.write_db),
         "db_enabled": db_enabled,
+        "mock_llm": bool(args.mock_llm),
         "since_days": args.since_days,
         "window_hours": args.window_hours,
         "topk": args.topk,
