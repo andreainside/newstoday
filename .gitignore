@@ -20,3 +20,10 @@ postgres-data/
 # IDE
 .vscode/
 .idea/
+
+# Local root-level data dumps (allow SQL in migrations/schema)
+/data*.sql
+/newstoday_phase3_*.sql
+!**/migrations/**/*.sql
+!**/schema/**/*.sql
+
