@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # RECONSTRUCTED_FROM_PYC_SYMBOLS
 # EVIDENCE: pyc symbol extraction on 2026-02-26
-# 哪些行为是占位，哪些是证据确认: 占位=所有算法与输出内容; 证据确认=脚本/模块名来自 pyc 文件名
+# Placeholder vs evidence: placeholder=all behavior/output; evidence=script/module name from pyc filename.
 """
 Minimal reconstructed placeholder for gen_event_merge_candidates.
 """
@@ -12,9 +12,13 @@ import json
 import math
 import re
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 RECONSTRUCTED_FROM_PYC_SYMBOLS = True
+dataclass = dataclass
+datetime = datetime
+timedelta = timedelta
 WORD_RE = re.compile(r"[A-Za-z0-9_]{2,}")
 
 
@@ -33,6 +37,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def text(value: object) -> str:
+    return "" if value is None else str(value)
+
+
+@dataclass
+class EventRow:
+    event_id: int
+    title: str
+    event_time: str
+    signature_v0: str = ""
+
+
 def _parse_event_ids(raw: str) -> list[int]:
     if not raw.strip():
         return []
@@ -43,6 +59,41 @@ def _parse_event_ids(raw: str) -> list[int]:
             continue
         ids.append(int(part))
     return ids
+
+
+def _parse_signature(signature: str) -> list[str]:
+    return [t.lower() for t in WORD_RE.findall(signature)]
+
+
+def _title_tokens(title: str) -> list[str]:
+    return [t.lower() for t in WORD_RE.findall(title)]
+
+
+def _weighted_overlap(tokens_a: list[str], tokens_b: list[str], idf: dict[str, float]) -> float:
+    overlap = set(tokens_a) & set(tokens_b)
+    if not overlap:
+        return 0.0
+    return sum(idf.get(t, 1.0) for t in overlap)
+
+
+def _build_idf(rows: list[EventRow]) -> dict[str, float]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        tokens = set(_title_tokens(row.title))
+        for t in tokens:
+            counts[t] = counts.get(t, 0) + 1
+    total = max(1, len(rows))
+    return {t: math.log((total + 1) / (c + 1)) + 1.0 for t, c in counts.items()}
+
+
+def _load_events(ids: list[int], since_days: int) -> list[EventRow]:
+    mock = _mock_events(ids, since_days)
+    return [EventRow(**row) for row in mock]
+
+
+def _overlap_or_gap_ok(a: EventRow, b: EventRow, window_hours: int) -> bool:
+    dt = abs(datetime.fromisoformat(a.event_time) - datetime.fromisoformat(b.event_time))
+    return dt <= timedelta(hours=max(1, window_hours))
 
 
 def _jaccard(a: str, b: str) -> float:
@@ -120,6 +171,8 @@ def main(argv: list[str] | None = None) -> int:
             title_jaccard = 0.0 if args.no_title_jaccard else _jaccard(a["title"], b["title"])
             time_bonus = max(0.0, 1.0 - (dt.total_seconds() / (max(1, args.window_hours) * 3600.0)))
             score = round(0.7 * title_jaccard + 0.3 * time_bonus, 4)
+            evidence_tokens = ",".join(list({_ for _ in WORD_RE.findall(a["title"]) if _})[:3])
+            top_overlap_weight = round(0.0 if args.no_title_jaccard else title_jaccard, 4)
             pairs.append(
                 {
                     "event_id_a": a["event_id"],
@@ -127,6 +180,8 @@ def main(argv: list[str] | None = None) -> int:
                     "title_jaccard": round(title_jaccard, 4),
                     "time_distance_hours": round(dt.total_seconds() / 3600.0, 2),
                     "score": score,
+                    "evidence_tokens": evidence_tokens,
+                    "top_overlap_weight": top_overlap_weight,
                     "signature_v0": f"{a['title'][:24]} | {b['title'][:24]}",
                 }
             )
@@ -134,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     pairs.sort(key=lambda x: x["score"], reverse=True)
     topk = max(1, args.topk)
     candidates = pairs[:topk]
+    sys.stderr.write("event_id_a event_id_b score evidence_tokens top_overlap_weight\n")
     payload = {
         "mode": "minimal_reconstructed",
         "reconstructed": RECONSTRUCTED_FROM_PYC_SYMBOLS,
