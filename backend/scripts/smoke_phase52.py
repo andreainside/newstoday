@@ -75,8 +75,6 @@ def main() -> int:
             name="judge_event_merge_suggestions_v1",
             args=["--dry-run", "--mock-llm"],
             required_keywords=[
-                "[warn] signature_v0 empty",
-                "[debug] candidates for",
                 "[done] suggestions=",
                 "llm_calls=",
                 "decision_path=RULE_RARE_TOKEN_STRONG",

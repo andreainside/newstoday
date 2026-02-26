@@ -5,6 +5,9 @@ from database import SessionLocal
 from models import Source, Article
 from sqlalchemy.dialects.postgresql import insert
 
+SKIP_SOURCE_NAMES = {"CBC World"}
+SKIP_SOURCE_URLS = {"https://rss.cbc.ca/lineup/world.xml"}
+
 
 def parse_published(entry) -> datetime | None:
     # feedparser may expose published_parsed (time.struct_time)
@@ -30,6 +33,9 @@ def main(limit: int = 50):
         failed_sources = []
 
         for source in sources:
+            if source.name in SKIP_SOURCE_NAMES or source.url in SKIP_SOURCE_URLS:
+                print(f" Skip source: {source.name} ({source.url})")
+                continue
             try:
                 feed = feedparser.parse(source.url)
 

@@ -7,7 +7,7 @@ Set-Location $BackendDir
 
 $Py = Join-Path $BackendDir "..\.venv\Scripts\python.exe"
 if (!(Test-Path $Py)) {
-  throw "Python venv not found at: $Py . Please check .venv path."
+  $Py = (Get-Command python -ErrorAction Stop).Source
 }
 
 New-Item -ItemType Directory -Force .\data\logs | Out-Null

@@ -1,4 +1,4 @@
-# backend/scripts/cluster_events_live.py
+﻿# backend/scripts/cluster_events_live.py
 from __future__ import annotations
 
 
@@ -22,17 +22,17 @@ TIME_NEAR_HOURS = 6
 
 # ===== Phase 2.1 Retrieval Control (Top-M articles -> Top-N events) =====
 RETR_WINDOW_DAYS = 7
-TOP_M_ARTICLES = 200
+TOP_M_ARTICLES = 2000
 TOP_N_EVENTS = 20
-MAX_ARTICLES_PER_EVENT = 3
+MAX_ARTICLES_PER_EVENT = 20
 VEC_MERGE_SIM = 0.62
 
 
 
 # ==============================================
 
-MAX_ARTICLES = 100            # 安全阀：最多处理多少篇
-DO_WRITE_DEFAULT = False     # 默认不写库
+MAX_ARTICLES = 100            # 瀹夊叏闃€锛氭渶澶氬鐞嗗灏戠瘒
+DO_WRITE_DEFAULT = False     # 榛樿涓嶅啓搴?
 
 
 @dataclass
@@ -46,10 +46,10 @@ class CandidateScore:
 
 def touch_event_on_merge(db, event_id: int, article_time: datetime) -> None:
     """
-    MERGE 成功后的事件对象维护：
-    - start_time：只会更早（min）
-    - end_time：只会更晚（max）
-    - last_updated_at：更新为 now()
+    MERGE 鎴愬姛鍚庣殑浜嬩欢瀵硅薄缁存姢锛?
+    - start_time锛氬彧浼氭洿鏃╋紙min锛?
+    - end_time锛氬彧浼氭洿鏅氾紙max锛?
+    - last_updated_at锛氭洿鏂颁负 now()
     """
     db.execute(
         text(
@@ -72,9 +72,9 @@ def get_recent_articles(db: Session, since: datetime, limit: int) -> List[dict]:
         FROM articles a
         LEFT JOIN event_articles ea ON ea.article_id = a.id
         WHERE a.published_at >= :since
-          AND ea.article_id IS NULL            -- 只处理未链接文章（避免重复扫）
-          AND a.embedding IS NOT NULL          -- 向量召回必须有 embedding
-        ORDER BY a.published_at ASC, a.id ASC          -- 取最新的
+          AND ea.article_id IS NULL            -- 鍙鐞嗘湭閾炬帴鏂囩珷锛堥伩鍏嶉噸澶嶆壂锛?
+          AND a.embedding IS NOT NULL          -- 鍚戦噺鍙洖蹇呴』鏈?embedding
+        ORDER BY a.published_at ASC, a.id ASC          -- 鍙栨渶鏂扮殑
         LIMIT :limit;
     """)
     rows = db.execute(q, {"since": since, "limit": limit}).mappings().all()
@@ -123,7 +123,7 @@ def pick_best_event(article: dict, candidates: List[dict], closed_ids: Optional[
         if best is None:
             best = cs
         else:
-            # 先比向量相似度，再比 fuzz
+            # 鍏堟瘮鍚戦噺鐩镐技搴︼紝鍐嶆瘮 fuzz
             if (cs.vec_sim, cs.fuzz) > (best.vec_sim, best.fuzz):
                 best = cs
 
@@ -138,31 +138,31 @@ def decide_action(best: Optional[CandidateScore], article_time: datetime, event_
     
     # Phase 2.2A-final: vector strong signal -> merge
     # 0) safety gate: very low lexical overlap + not-very-strong vec => force NEW
-    # (放在所有 vector merge 之前，防止“语义泛相关”误合并)
+    # (鏀惧湪鎵€鏈?vector merge 涔嬪墠锛岄槻姝⑩€滆涔夋硾鐩稿叧鈥濊鍚堝苟)
     if best.vec_sim < 0.74 and best.jaccard <= 0.01 and best.fuzz < 45:
         return "new"
 
     # 1) strong vector signal -> merge
-    if best.vec_sim >= VEC_MERGE_SIM:   # 仍然是 0.62
+    if best.vec_sim >= VEC_MERGE_SIM:   # 浠嶇劧鏄?0.62
         return "merge"
 
     # 2) medium vector signal + light lexical support -> merge
-    #    覆盖大量 vec≈0.56~0.61 & fuzz≈45~54 的真实同事件
+    #    瑕嗙洊澶ч噺 vec鈮?.56~0.61 & fuzz鈮?5~54 鐨勭湡瀹炲悓浜嬩欢
     if best.vec_sim >= 0.54 and best.fuzz >= 45:
         return "merge"
 
 
-    # 强合并
+    # 寮哄悎骞?
     if best.fuzz >= FUZZ_ACCEPT:
         return "merge"
 
-    # 灰区：需要第二证据
+    # 鐏板尯锛氶渶瑕佺浜岃瘉鎹?
     if best.fuzz >= FUZZ_MAYBE:
-        # 证据1：关键词重叠
+        # 璇佹嵁1锛氬叧閿瘝閲嶅彔
         if best.jaccard >= JACCARD_MAYBE:
             return "merge"
 
-        # 证据2：时间非常近（注意 end_time 可能为 None）
+        # 璇佹嵁2锛氭椂闂撮潪甯歌繎锛堟敞鎰?end_time 鍙兘涓?None锛?
         if event_end_time is not None:
             if abs(article_time - event_end_time) <= timedelta(hours=TIME_NEAR_HOURS):
                 return "merge"
@@ -172,16 +172,18 @@ def decide_action(best: Optional[CandidateScore], article_time: datetime, event_
 
 def create_event(db: Session, title: str, start_time: datetime, end_time: datetime) -> int:
     q = text("""
-        INSERT INTO events (title, representative_title, start_time, end_time, created_at)
-        VALUES (:title, :rep, :start_time, :end_time, :created_at)
+        INSERT INTO events (title, representative_title, start_time, end_time, created_at, last_updated_at)
+        VALUES (:title, :rep, :start_time, :end_time, :created_at, :last_updated_at)
         RETURNING id;
     """)
+    now_ts = datetime.now(UTC).replace(tzinfo=None)
     new_id = db.execute(q, {
         "title": title,
         "rep": title,
         "start_time": start_time,
         "end_time": end_time,
-        "created_at": datetime.now(UTC).replace(tzinfo=None),  # 你的表是 without time zone
+        "created_at": now_ts,
+        "last_updated_at": now_ts,
     }).scalar_one()
     return int(new_id)
 
@@ -214,10 +216,10 @@ def get_candidate_event_ids_via_vector(
 ) -> dict[int, float]:
     """
     Phase 2.1 retrieval v0:
-    1) 用 query_article 的 embedding 在 articles 表召回 Top-M 相似文章（带时间窗 window_days）
-    2) 通过 event_articles 映射到 event_id
-    3) 对每个 event 最多保留 max_articles_per_event 篇贡献文章（避免大事件霸榜）
-    4) 按 event 的 best similarity 排序，取 Top-N events（硬上限）
+    1) 鐢?query_article 鐨?embedding 鍦?articles 琛ㄥ彫鍥?Top-M 鐩镐技鏂囩珷锛堝甫鏃堕棿绐?window_days锛?
+    2) 閫氳繃 event_articles 鏄犲皠鍒?event_id
+    3) 瀵规瘡涓?event 鏈€澶氫繚鐣?max_articles_per_event 绡囪础鐚枃绔狅紙閬垮厤澶т簨浠堕湼姒滐級
+    4) 鎸?event 鐨?best similarity 鎺掑簭锛屽彇 Top-N events锛堢‖涓婇檺锛?
     """
     q = text("""
     WITH q AS (
@@ -297,7 +299,7 @@ def main(do_write: bool = DO_WRITE_DEFAULT) -> None:
     try:
         articles = get_recent_articles(db, since, limit=MAX_ARTICLES)
 
-        # Phase 2.2A: 不再全扫候选 events（窗口全表），而是 per-article 用向量召回得到 Top-N events
+        # Phase 2.2A: 涓嶅啀鍏ㄦ壂鍊欓€?events锛堢獥鍙ｅ叏琛級锛岃€屾槸 per-article 鐢ㄥ悜閲忓彫鍥炲緱鍒?Top-N events
         print(f"[mode] {'WRITE' if do_write else 'DRY-RUN'} (A=conservative)")
         print(f"[info] articles since {since.isoformat()} = {len(articles)} (max {MAX_ARTICLES})")
         print(f"[info] retrieval: window_days={RETR_WINDOW_DAYS} top_m_articles={TOP_M_ARTICLES} top_n_events={TOP_N_EVENTS} max_articles_per_event={MAX_ARTICLES_PER_EVENT}")
@@ -305,7 +307,7 @@ def main(do_write: bool = DO_WRITE_DEFAULT) -> None:
 
 
         if do_write:
-            # 写库模式：事务块内全部成功 -> 自动 commit；中途异常 -> 自动 rollback
+            # 鍐欏簱妯″紡锛氫簨鍔″潡鍐呭叏閮ㄦ垚鍔?-> 鑷姩 commit锛涗腑閫斿紓甯?-> 鑷姩 rollback
             db.rollback()
             with db.begin():
                 for i, a in enumerate(articles, start=1):
@@ -333,9 +335,9 @@ def main(do_write: bool = DO_WRITE_DEFAULT) -> None:
                         print("    best_event=None")
                     print(f"    DECISION: {action.upper()}")
 
-                    # --- Step 3C.1: 只打印“将要更新/创建”的对象维护动作（DRY-RUN 下不写库） ---
+                    # --- Step 3C.1: 鍙墦鍗扳€滃皢瑕佹洿鏂?鍒涘缓鈥濈殑瀵硅薄缁存姢鍔ㄤ綔锛圖RY-RUN 涓嬩笉鍐欏簱锛?---
                     if action == "merge":
-                    # best 一定不为 None，否则 decide_action 会返回 "new"
+                    # best 涓€瀹氫笉涓?None锛屽惁鍒?decide_action 浼氳繑鍥?"new"
                         print(
                             f"    [will_update] event_id={best.event_id} "
                             f"end_time: {best.end_time} -> {article_time} "
@@ -357,7 +359,7 @@ def main(do_write: bool = DO_WRITE_DEFAULT) -> None:
                         new_event_id = create_event(db, a["title"], published_at, published_at)
                         link_article(db, new_event_id, a["id"])
 
-                        # 新事件加入 candidates，后续文章才有机会 merge 到它
+                        # 鏂颁簨浠跺姞鍏?candidates锛屽悗缁枃绔犳墠鏈夋満浼?merge 鍒板畠
                         candidates.insert(
                             0,
                             {
@@ -373,10 +375,10 @@ def main(do_write: bool = DO_WRITE_DEFAULT) -> None:
                     else:
                         link_article(db, best.event_id, a["id"])
                         
-                        # ✅ 事件对象维护：一次 SQL 搞定 start/end/last_updated_at
+                        # 鉁?浜嬩欢瀵硅薄缁存姢锛氫竴娆?SQL 鎼炲畾 start/end/last_updated_at
                         touch_event_on_merge(db, best.event_id, published_at)
                         
-                        # ✅ 同步内存 candidates，避免下一篇文章用到旧时间
+                        # 鉁?鍚屾鍐呭瓨 candidates锛岄伩鍏嶄笅涓€绡囨枃绔犵敤鍒版棫鏃堕棿
                         for e in candidates:
                             if e["id"] == best.event_id:
                                 old_end = e.get("end_time")
@@ -393,8 +395,8 @@ def main(do_write: bool = DO_WRITE_DEFAULT) -> None:
 
             print("[done] committed.")
         else:
-            # DRY-RUN：不写库，不开事务
-            # DRY-RUN：不写库，不开事务
+            # DRY-RUN锛氫笉鍐欏簱锛屼笉寮€浜嬪姟
+            # DRY-RUN锛氫笉鍐欏簱锛屼笉寮€浜嬪姟
             for i, a in enumerate(articles, start=1):
                 # 1) per-article retrieval: Top-N events (cap=20)
                 cand_map = get_candidate_event_ids_via_vector(db, a["id"])  # dict: {event_id: best_sim}
@@ -437,7 +439,7 @@ def main(do_write: bool = DO_WRITE_DEFAULT) -> None:
 
 
     except Exception:
-        # 事务块内异常会自动回滚；这里兜底关闭 session
+        # 浜嬪姟鍧楀唴寮傚父浼氳嚜鍔ㄥ洖婊氾紱杩欓噷鍏滃簳鍏抽棴 session
         raise
     finally:
         db.close()
@@ -450,3 +452,4 @@ if __name__ == "__main__":
     parser.add_argument("--write", action="store_true", help="actually write events/event_articles to DB")
     args = parser.parse_args()
     main(do_write=args.write)
+

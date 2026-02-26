@@ -1,5 +1,4 @@
 // frontend/app/events/[id]/page.tsx
-import Link from "next/link";
 
 type EventDetailResponse = {
   event: {
@@ -95,8 +94,7 @@ type EventDetailResponse = {
 // }
 
 function fmtTime(s: string | null | undefined) {
-  if (!s) return "N/A";
-  // 直接展示 ISO，先不做时区转换，保证口径稳定
+  if (!s) return "";
   return s.replace("T", " ").replace("Z", "");
 }
 
@@ -232,18 +230,9 @@ function GapPanel({ gaps }: { gaps: EventDetailResponse["gaps"] }) {
   );
 }
 
-function safeStringify(x: any) {
-  try {
-    return JSON.stringify(x, null, 2);
-  } catch (e: any) {
-    return `[Coverage stringify failed] ${e?.message ?? String(e)}`;
-  }
-}
-
-function GapHintsView({ gaps }: { gaps: any }) {
-  // v0：默认折叠，避免焦虑
-  const list: any[] = Array.isArray(gaps) ? gaps : (gaps?.items ?? gaps?.gaps ?? []);
-  const count = Array.isArray(list) ? list.length : 0;
+function CoverageMatrix({ coverage }: { coverage: EventDetailResponse["coverage"] }) {
+  const types = Array.isArray(coverage?.types) ? coverage.types : [];
+  const rows = Array.isArray(coverage?.rows) ? coverage.rows : [];
 
   return (
     <section style={{ marginTop: 20 }}>
@@ -336,26 +325,21 @@ function ArticleList({ articles }: { articles: EventDetailResponse["articles"] }
 export default async function EventDetailPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  const { id } = params;
+  const { id } = await params;
 
   if (!id) {
     throw new Error("Route param id is missing");
   }
 
   const data = await fetchEventDetail(id);
-  const e = data.event;
 
   return (
     <main style={{ maxWidth: 900, margin: "24px auto", padding: "0 16px" }}>
-      <Link href="/" style={{ textDecoration: "none" }}>
-        ← Back
-      </Link>
-
-      <h1 style={{ marginTop: 12, fontSize: 22, fontWeight: 800 }}>
-        {e.title}
-      </h1>
+      <a href="/" style={{ textDecoration: "none", color: "#1e1b16", fontSize: 13 }}>
+        Back
+      </a>
 
       <EventHeader event={data.event} />
       <GapPanel gaps={data.gaps} />

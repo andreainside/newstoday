@@ -1,7 +1,7 @@
-# backend/app/services/coverage_matrix.py
-# Phase 2.2B v0: Coverage Matrix computation (READ-ONLY)
+from __future__ import annotations
 
 from sqlalchemy import text
+
 from app.database import engine
 
 
@@ -18,54 +18,59 @@ SELECT
   ARRAY_AGG(a.id ORDER BY a.published_at DESC NULLS LAST) AS article_ids
 FROM event_articles ea
 JOIN articles a ON a.id = ea.article_id
-JOIN sources  s ON s.id = a.source_id
+JOIN sources s ON s.id = a.source_id
 WHERE ea.event_id = :event_id
 GROUP BY ea.event_id, s.id, s.name, effective_type
 ORDER BY s.name, effective_type;
 """
 
 
-def get_coverage_matrix(event_id: int) -> dict:
-    """
-    Return coverage matrix for a given event_id.
-    """
-    with engine.connect() as conn:
-        rows = conn.execute(
-            text(SQL_COVERAGE_MATRIX),
-            {"event_id": event_id},
-        ).mappings().all()
+KNOWN_TYPES = ["FACT", "INTERPRETATION", "COMMENTARY", "UNKNOWN"]
 
-    rows_by_source = {}
-    totals = {"FACT": 0, "INTERPRETATION": 0, "COMMENTARY": 0, "UNKNOWN": 0}
-    totals = {"FACT": 0, "INTERPRETATION": 0, "COMMENTARY": 0}
+
+def _normalize_type(raw: str | None) -> str:
+    if not raw:
+        return "UNKNOWN"
+    t = str(raw).strip().upper()
+    if not t:
+        return "UNKNOWN"
+    if t in ("ANALYSIS", "EXPLAINER"):
+        return "INTERPRETATION"
+    if t in ("OPINION", "EDITORIAL", "COMMENT"):
+        return "COMMENTARY"
+    if t in KNOWN_TYPES:
+        return t
+    return "UNKNOWN"
+
+
+def get_coverage_matrix(event_id: int) -> dict:
+    with engine.connect() as conn:
+        rows = conn.execute(text(SQL_COVERAGE_MATRIX), {"event_id": int(event_id)}).mappings().all()
+
+    rows_by_source: dict[int, dict] = {}
+    totals = {t: 0 for t in KNOWN_TYPES}
 
     for r in rows:
-        sid = r["source_id"]
+        sid = int(r["source_id"])
         if sid not in rows_by_source:
             rows_by_source[sid] = {
                 "source_id": sid,
                 "source_name": r["source_name"],
-                "counts": {"FACT": 0, "INTERPRETATION": 0, "COMMENTARY": 0, "UNKNOWN": 0},
-                "article_ids": {
-                    "FACT": [],
-                    "INTERPRETATION": [],
-                    "COMMENTARY": [],
-                    "UNKNOWN": [],
-                },
+                "counts": {t: 0 for t in KNOWN_TYPES},
+                "article_ids": {t: [] for t in KNOWN_TYPES},
             }
 
-        atype = r.get("article_type") or "UNKNOWN"
-        rows_by_source[sid]["counts"][atype] = r["cnt"]
-        rows_by_source[sid]["article_ids"][atype] = list(r["article_ids"])
-        totals[atype] += r["cnt"]
-        etype = r["effective_type"]
-        rows_by_source[sid]["counts"][etype] = r["cnt"]
-        rows_by_source[sid]["article_ids"][etype] = list(r["article_ids"])
-        totals[etype] += r["cnt"]
+        etype = _normalize_type(r.get("effective_type"))
+        cnt = int(r["cnt"])
+        ids = list(r["article_ids"] or [])
+
+        rows_by_source[sid]["counts"][etype] = cnt
+        rows_by_source[sid]["article_ids"][etype] = ids
+        totals[etype] += cnt
 
     return {
-        "event_id": event_id,
-        "types": ["FACT", "INTERPRETATION", "COMMENTARY", "UNKNOWN"],
+        "event_id": int(event_id),
+        "types": KNOWN_TYPES,
         "rows": list(rows_by_source.values()),
         "totals": totals,
     }

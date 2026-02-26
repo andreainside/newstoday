@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 # 注意：这里用 psycopg（SQLAlchemy 的 postgresql+psycopg 方言）
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+psycopg://postgres:postgres@localhost:5432/newstoday_fresh",
+    "postgresql+psycopg://postgres:postgres@localhost:5432/newstoday",
 )
 
 # 2) Engine

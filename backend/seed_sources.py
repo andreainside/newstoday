@@ -21,7 +21,6 @@ def main():
             {"name": "The Guardian US", "url": "https://www.theguardian.com/us-news/rss"},
             {"name": "Al Jazeera", "url": "https://www.aljazeera.com/xml/rss/all.xml"},
             {"name": "Deutsche Welle", "url": "https://rss.dw.com/rdf/rss-en-all"},
-            {"name": "CBC World", "url": "https://rss.cbc.ca/lineup/world.xml"},
             {"name": "Sky News World", "url": "https://feeds.skynews.com/feeds/rss/world.xml"},
             {"name": "ABC News Top", "url": "https://abcnews.go.com/abcnews/topstories"},
             {"name": "NBC News Top", "url": "https://feeds.nbcnews.com/nbcnews/public/news"},

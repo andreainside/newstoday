@@ -24,14 +24,14 @@ WITH stats AS (
     COALESCE(e.representative_title, e.title) AS title,
     e.start_time,
     e.end_time,
-    e.last_updated_at AS last_seen_at,
+    COALESCE(e.last_updated_at, e.end_time, e.created_at) AS last_seen_at,
     COUNT(ea.article_id) AS articles_count,
     COUNT(DISTINCT a.source_id) AS sources_count
   FROM events e
   JOIN event_articles ea ON ea.event_id = e.id
   JOIN articles a ON a.id = ea.article_id
-  WHERE e.last_updated_at >= (:as_of_ts - (:window_hours || ' hours')::interval)
-  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, e.last_updated_at
+  WHERE COALESCE(e.last_updated_at, e.end_time, e.created_at) >= (:as_of_ts - (:window_hours || ' hours')::interval)
+  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, COALESCE(e.last_updated_at, e.end_time, e.created_at)
 ),
 scored AS (
   SELECT
@@ -59,14 +59,14 @@ WITH base AS (
     COALESCE(e.representative_title, e.title) AS title,
     e.start_time,
     e.end_time,
-    e.last_updated_at AS last_seen_at,
+    COALESCE(e.last_updated_at, e.end_time, e.created_at) AS last_seen_at,
     COUNT(ea.article_id) AS articles_count,
     COUNT(DISTINCT a.source_id) AS sources_count
   FROM events e
   JOIN event_articles ea ON ea.event_id = e.id
   JOIN articles a ON a.id = ea.article_id
   WHERE e.id = :event_id
-  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, e.last_updated_at
+  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, COALESCE(e.last_updated_at, e.end_time, e.created_at)
 )
 SELECT * FROM base;
 """
@@ -187,8 +187,8 @@ def get_event_detail(event_id: int, diversity: int = 0, debug: bool = False) -> 
   selected_articles, diversity_dbg = _apply_diversity_v0(
     articles,
     diversity=diversity,
-    k=12,
-    candidate_cap=50,
+    k=max(12, len(articles)),
+    candidate_cap=max(50, len(articles)),
     max_source_ratio=0.6,
   )
   articles = selected_articles
