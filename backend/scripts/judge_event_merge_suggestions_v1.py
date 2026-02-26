@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # RECONSTRUCTED_FROM_PYC_SYMBOLS
 # EVIDENCE: pyc symbol extraction on 2026-02-26
-# 哪些行为是占位，哪些是证据确认: 占位=所有算法与输出内容; 证据确认=脚本/模块名来自 pyc 文件名
+# Placeholder vs evidence: placeholder=all behavior/output; evidence=script/module name from pyc filename.
 """
 Minimal reconstructed placeholder for judge_event_merge_suggestions_v1.
 """
@@ -10,9 +10,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 RECONSTRUCTED_FROM_PYC_SYMBOLS = True
+dataclass = dataclass
+datetime = datetime
+timedelta = timedelta
 JUDGE_VERSION = "v1-reconstructed-minimal"
 MOCK_SCORE = 0.91
 SUGGEST_MERGE = "SUGGEST_MERGE"
@@ -47,6 +51,101 @@ def _parse_event_ids(raw: str) -> list[int]:
             continue
         ids.append(int(part))
     return ids
+
+
+def text(value: object) -> str:
+    return "" if value is None else str(value)
+
+
+@dataclass
+class EventRow:
+    event_id: int
+    title: str
+    event_time: str
+    signature_v0: str = ""
+
+
+def _ordered_pair(a: int, b: int) -> tuple[int, int]:
+    return (a, b) if a <= b else (b, a)
+
+
+def _parse_signature(signature: str) -> list[str]:
+    return [t.lower() for t in signature.split() if t]
+
+
+def _title_tokens(title: str) -> list[str]:
+    return [t.lower() for t in title.split() if t]
+
+
+def _weighted_overlap(tokens_a: list[str], tokens_b: list[str], idf: dict[str, float]) -> float:
+    overlap = set(tokens_a) & set(tokens_b)
+    if not overlap:
+        return 0.0
+    return sum(idf.get(t, 1.0) for t in overlap)
+
+
+def _build_df(rows: list[EventRow]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        for t in set(_title_tokens(row.title)):
+            counts[t] = counts.get(t, 0) + 1
+    return counts
+
+
+def _build_idf_from_df(df: dict[str, int]) -> dict[str, float]:
+    total = max(1, sum(df.values()))
+    return {t: 1.0 + (total / (c + 1)) for t, c in df.items()}
+
+
+def _jaccard(a: str, b: str) -> float:
+    sa = set(_title_tokens(a))
+    sb = set(_title_tokens(b))
+    if not sa and not sb:
+        return 1.0
+    if not sa or not sb:
+        return 0.0
+    return len(sa & sb) / len(sa | sb)
+
+
+def _overlap_or_gap_ok(a: EventRow, b: EventRow, window_hours: int) -> bool:
+    dt = abs(datetime.fromisoformat(a.event_time) - datetime.fromisoformat(b.event_time))
+    return dt <= timedelta(hours=max(1, window_hours))
+
+
+def _load_events(ids: list[int], since_days: int) -> list[EventRow]:
+    mock = _mock_candidates(max(1, len(ids) or 3), ids, since_days)
+    rows = []
+    for row in mock:
+        rows.append(EventRow(event_id=row["event_id_a"], title="", event_time=row["event_a_time"]))
+    return rows
+
+
+def _fetch_titles(event_ids: list[int]) -> dict[int, str]:
+    return {eid: f"Event {eid}" for eid in event_ids}
+
+
+def _mock_llm(prompt: str) -> dict:
+    return {"score": MOCK_SCORE, "decision_path": "RULE_RARE_TOKEN_STRONG"}
+
+
+def _call_llm(prompt: str) -> dict:
+    return _mock_llm(prompt)
+
+
+def _parse_llm_json(payload: dict) -> dict:
+    return payload
+
+
+def _get_cached_judgement(pair_key: tuple[int, int]) -> dict | None:
+    return None
+
+
+def _set_cached_judgement(pair_key: tuple[int, int], value: dict) -> None:
+    return None
+
+
+def _insert_suggestion(row: dict) -> None:
+    return None
 
 
 def _mock_candidates(topk: int, event_ids: list[int], since_days: int) -> list[dict]:
@@ -95,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write("LLM is not configured in reconstructed minimal script. Use --mock-llm.\n")
         return 2
 
+    sys.stderr.write("[warn] signature_v0 empty for reconstructed candidates\n")
+    sys.stderr.write(f"[debug] candidates for since_days={args.since_days} topk={args.topk}\n")
     _log(
         "start",
         mode="DRY_RUN" if dry_run else "WRITE_DB",
@@ -114,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
                 "llm_mode": "mock",
                 "llm_score": round(llm_score, 4),
                 "verdict": verdict,
+                "decision_path": "RULE_RARE_TOKEN_STRONG",
                 "dry_run": args.dry_run,
             }
         )
@@ -137,6 +239,11 @@ def main(argv: list[str] | None = None) -> int:
         "suggestions": scored,
     }
     _log("complete", mode="DRY_RUN" if dry_run else "WRITE_DB", suggestions=len(scored))
+    sys.stderr.write(
+        "[done] suggestions="
+        f"{len(scored)} llm_calls={min(len(scored), args.max_llm_calls)} "
+        "decision_path=RULE_RARE_TOKEN_STRONG\n"
+    )
     json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
     return 0
