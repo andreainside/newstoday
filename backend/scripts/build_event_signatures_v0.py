@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # RECONSTRUCTED_FROM_PYC_SYMBOLS
 # EVIDENCE: pyc symbol extraction on 2026-02-26
-# 哪些行为是占位，哪些是证据确认: 占位=所有算法与输出内容; 证据确认=脚本/模块名来自 pyc 文件名
+# Placeholder vs evidence: placeholder=all behavior/output; evidence=script/module name from pyc filename.
 """
 Minimal reconstructed placeholder for build_event_signatures_v0.
 """
@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 RECONSTRUCTED_FROM_PYC_SYMBOLS = True
+Counter = Counter
 ORG_EVENT_KEYWORDS = {
     "police",
     "court",
@@ -42,13 +43,42 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def text(value: object) -> str:
+    return "" if value is None else str(value)
+
+
+def _clean_token(token: str) -> str:
+    return token.strip().lower()
+
+
+def _allow_token(token: str) -> bool:
+    return bool(token) and token not in SINGLE_WORD_STOP
+
+
 def _tokenize(text: str) -> list[str]:
-    tokens = [t.lower() for t in WORD_RE.findall(text)]
-    return [t for t in tokens if t not in SINGLE_WORD_STOP]
+    tokens = [_clean_token(t) for t in WORD_RE.findall(text)]
+    return [t for t in tokens if _allow_token(t)]
+
+
+def _extract_from_title(title: str) -> list[str]:
+    return _tokenize(title)
+
+
+def _extract_from_text(body: str) -> list[str]:
+    return _tokenize(body)
+
+
+def _add_keywords(tokens: list[str], keywords: Iterable[str]) -> list[str]:
+    merged = list(tokens)
+    for kw in keywords:
+        clean = _clean_token(kw)
+        if _allow_token(clean):
+            merged.append(clean)
+    return merged
 
 
 def _build_signature(title: str, top_n: int) -> str:
-    counts = Counter(_tokenize(title))
+    counts = Counter(_extract_from_title(title))
     ranked = [w for w, _ in counts.most_common(max(1, top_n))]
     return " ".join(ranked)
 
@@ -111,6 +141,13 @@ def main(argv: list[str] | None = None) -> int:
                 "updated_at": event["updated_at"],
             }
         )
+    empty_count = sum(1 for r in rows if not r["signature_v0"])
+    nonempty_count = sum(1 for r in rows if r["signature_v0"])
+    sys.stderr.write(
+        "[done] build_event_signatures_v0 scanned="
+        f"{len(rows)} updated={len(rows)} empty_signature_count={empty_count} "
+        f"nonempty_signature_count={nonempty_count}\n"
+    )
 
     payload = {
         "mode": "minimal_reconstructed",
@@ -123,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
         "since_ts": since_ts,
         "limit_events": args.limit_events,
         "top_n": args.top_n,
-        "nonempty_signature_count": sum(1 for r in rows if r["signature_v0"]),
+        "nonempty_signature_count": nonempty_count,
         "events": rows,
     }
     _log("complete", mode="DRY_RUN" if dry_run else "WRITE_DB", rows=len(rows))
