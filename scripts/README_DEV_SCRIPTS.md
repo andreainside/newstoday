@@ -29,6 +29,21 @@ python .\scripts\diagnose_funnel.py
 python .\scripts\diagnose_supply.py
 ```
 
+## Top5 eval quality
+```powershell
+# Evaluate top5 quality vs human baseline + article attachment audit
+python .\backend\scripts\eval_top5_events_quality.py --write-log
+
+# Optional: export JSON
+python .\backend\scripts\eval_top5_events_quality.py --output-json .\scripts\eval_top5_quality.json
+```
+
+## Daily eval dashboard
+```powershell
+# Log top-events params for today, then print daily aggregates
+python .\backend\scripts\dashboard_eval_daily.py --write-params
+```
+
 ## Launch frontend + backend
 ```powershell
 .\dev.ps1
