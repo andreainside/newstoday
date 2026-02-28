@@ -3,7 +3,7 @@ name: update_live
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron:  "0 */6 * * *"
 
 concurrency:
   group: update_live
