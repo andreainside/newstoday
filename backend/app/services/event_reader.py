@@ -14,8 +14,8 @@ from app.services.article_types import effective_type
 
 # v0 固定口径参数（稳定、可复现）
 WINDOW_HOURS = 72
-TAU_HOURS = 24
-WEIGHTS = {"hot": 0.45, "div": 0.35, "fresh": 0.20}
+TAU_HOURS = 12
+WEIGHTS = {"hot": 0.25, "div": 0.20, "fresh": 0.55}
 
 SQL_TOP_EVENTS = """
 WITH stats AS (
@@ -24,25 +24,26 @@ WITH stats AS (
     COALESCE(e.representative_title, e.title) AS title,
     e.start_time,
     e.end_time,
-    COALESCE(e.last_updated_at, e.end_time, e.created_at) AS last_seen_at,
+    MAX(a.published_at) AS max_article_time,
+    COALESCE(MAX(a.published_at), e.end_time, e.created_at) AS last_seen_at,
     COUNT(ea.article_id) AS articles_count,
     COUNT(DISTINCT a.source_id) AS sources_count
   FROM events e
   JOIN event_articles ea ON ea.event_id = e.id
   JOIN articles a ON a.id = ea.article_id
-  WHERE COALESCE(e.last_updated_at, e.end_time, e.created_at) >= (:as_of_ts - (:window_hours || ' hours')::interval)
-  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, COALESCE(e.last_updated_at, e.end_time, e.created_at)
+  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, e.created_at
+  HAVING MAX(a.published_at) >= (:as_of_ts - (:window_hours || ' hours')::interval)
 ),
 scored AS (
   SELECT
     s.*,
-    EXTRACT(EPOCH FROM (:as_of_ts - s.last_seen_at))/3600.0 AS age_hours,
-    LN(1 + s.articles_count) AS hot,
+    EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0 AS age_hours,
+    (LN(1 + s.articles_count) / (1 + (EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0) / 24.0)) AS hot,
     LN(1 + s.sources_count) AS div,
-    EXP(-(EXTRACT(EPOCH FROM (:as_of_ts - s.last_seen_at))/3600.0) / :tau_hours) AS fresh,
-    (:w_hot * LN(1 + s.articles_count)
+    EXP(-(EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0) / :tau_hours) AS fresh,
+    (:w_hot * (LN(1 + s.articles_count) / (1 + (EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0) / 24.0))
      + :w_div * LN(1 + s.sources_count)
-     + :w_fresh * EXP(-(EXTRACT(EPOCH FROM (:as_of_ts - s.last_seen_at))/3600.0) / :tau_hours)
+     + :w_fresh * EXP(-(EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0) / :tau_hours)
     ) AS score
   FROM stats s
 )
