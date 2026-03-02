@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, UTC
 from typing import List, Optional, Tuple, Set
@@ -11,6 +12,16 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.services.title_similarity import explain_jaccard, fuzz_token_set_ratio
+
+# Avoid Windows console encoding crashes during logging (e.g., GBK can't encode some chars).
+# We prefer replacing unencodable glyphs rather than aborting a write transaction.
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(errors="replace")
+except Exception:
+    pass
 
 LOOKBACK_HOURS = 240
 CANDIDATE_WINDOW_HOURS = 48
