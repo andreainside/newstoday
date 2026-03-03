@@ -38,6 +38,13 @@ def _parse_fetch_rss(text: str) -> dict:
     return {"articles_inserted": "unknown"}
 
 
+def _parse_seed_sources(text: str) -> dict:
+    m = re.search(r"Inserted\s+(\d+)\s+new\s+sources", text)
+    if m:
+        return {"sources_inserted": int(m.group(1))}
+    return {"sources_inserted": "unknown"}
+
+
 def _parse_backfill_embeddings(text: str) -> dict:
     m = re.search(r"updated\s+(\d+)\s+rows", text)
     if m:
@@ -109,6 +116,7 @@ def _build_steps(*, backend_dir: Path, do_write: bool) -> list[Step]:
     scripts_dir = backend_dir / "scripts"
 
     fetch_rss_path = backend_dir / "fetch_rss.py"
+    seed_sources_path = backend_dir / "seed_sources.py"
     backfill_embeddings_path = scripts_dir / "backfill_embeddings_live.py"
     backfill_article_types_path = scripts_dir / "backfill_article_types.py"
     cluster_live_path = scripts_dir / "cluster_events_live.py"
@@ -116,6 +124,8 @@ def _build_steps(*, backend_dir: Path, do_write: bool) -> list[Step]:
 
     if not fetch_rss_path.exists():
         raise FileNotFoundError("fetch_rss.py not found")
+    if not seed_sources_path.exists():
+        raise FileNotFoundError("seed_sources.py not found")
     if not backfill_embeddings_path.exists():
         raise FileNotFoundError("backfill_embeddings_live.py not found")
     if not backfill_article_types_path.exists():
@@ -129,6 +139,13 @@ def _build_steps(*, backend_dir: Path, do_write: bool) -> list[Step]:
         raise FileNotFoundError("cluster_events_live.py not found (and no fallback)")
 
     steps: list[Step] = [
+        Step(
+            name="seed_sources",
+            cmd=[sys.executable, "-m", "seed_sources"],
+            supports_dry_run=False,
+            incremental_safe=True,
+            parse_counts=_parse_seed_sources,
+        ),
         Step(
             name="fetch_rss",
             cmd=[sys.executable, "-m", "fetch_rss"],
