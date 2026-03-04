@@ -33,7 +33,6 @@ export default function SourceNewspaperCard({
   isFeatured = false,
 }: Props) {
   const [isHovered, setIsHovered] = useState(false);
-  const [isFocused, setIsFocused] = useState(false);
   const [isMobileExpanded, setIsMobileExpanded] = useState(false);
 
   const fmtTime = (s: string | null | undefined) => {
@@ -41,7 +40,7 @@ export default function SourceNewspaperCard({
     return s.replace("T", " ").replace("Z", "");
   };
 
-  const isExpanded = isHovered || isFocused || isMobileExpanded;
+  const isExpanded = isHovered || isMobileExpanded;
   const visibleCount = isExpanded ? articles.length : COLLAPSED_LIST_COUNT;
   const visibleItems = articles.slice(0, visibleCount);
 
@@ -52,13 +51,6 @@ export default function SourceNewspaperCard({
       }`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      onFocusCapture={() => setIsFocused(true)}
-      onBlurCapture={(event) => {
-        const nextTarget = event.relatedTarget as Node | null;
-        if (!event.currentTarget.contains(nextTarget)) {
-          setIsFocused(false);
-        }
-      }}
     >
       <div className={styles.sourceHeader}>
         <h2 className={styles.sourceName}>{sourceName}</h2>
