@@ -137,19 +137,41 @@ ON CONFLICT (event_id, provider, model) DO NOTHING
 RETURNING event_id;
 """
 
+SQL_ENSURE_EVENT_AI_CACHE = """
+CREATE TABLE IF NOT EXISTS event_ai_cache (
+  id bigserial PRIMARY KEY,
+  event_id bigint NOT NULL,
+  provider text NOT NULL,
+  model text NOT NULL,
+  status text NOT NULL DEFAULT 'PENDING',
+  output_json jsonb,
+  error text,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(event_id, provider, model)
+);
+"""
+
 EVENT_TITLE_PROMPT_VERSION = "event_title_v1"
 EVENT_TITLE_INPUT_HASH = "top_titles_v1"
 EVENT_AI_PENDING_RETRY_SECONDS = int(os.getenv("EVENT_AI_PENDING_RETRY_SECONDS", "90"))
+EVENT_AI_AUTO_CREATE_TABLE = os.getenv("EVENT_AI_AUTO_CREATE_TABLE", "1") == "1"
 
 def _utc_now() -> datetime:
   # 统一用 UTC，避免前后端时区混乱
   return datetime.now(timezone.utc)
+
+
+def _bootstrap_event_ai_cache_table(db) -> None:
+  if EVENT_AI_AUTO_CREATE_TABLE:
+    db.execute(text(SQL_ENSURE_EVENT_AI_CACHE))
 
 def get_top_events(limit: int) -> Dict[str, Any]:
   limit = max(1, min(int(limit), 20))
   as_of = _utc_now()
 
   with SessionLocal() as db:
+    _bootstrap_event_ai_cache_table(db)
+
     rows: Result = db.execute(
       text(SQL_TOP_EVENTS),
       {
