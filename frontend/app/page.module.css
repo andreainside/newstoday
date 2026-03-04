@@ -261,8 +261,10 @@
   letter-spacing: -0.01em;
   font-weight: 700;
   color: #f3f1ee;
-  text-wrap: balance;
   display: block;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
   overflow: visible;
 }
 

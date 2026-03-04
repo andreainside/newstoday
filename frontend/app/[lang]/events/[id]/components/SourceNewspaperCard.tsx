@@ -53,7 +53,9 @@ export default function SourceNewspaperCard({
         <span className={styles.articleCountBadge}>{articles.length} articles</span>
       </div>
 
-      <div className={styles.listViewport}>
+      <div
+        className={`${styles.listViewport} ${isExpanded ? styles.listViewportExpanded : ""}`}
+      >
         <div className={styles.articleList}>
           {visibleItems.map((a) => (
             <article key={a.article_id} className={styles.articleItem}>
