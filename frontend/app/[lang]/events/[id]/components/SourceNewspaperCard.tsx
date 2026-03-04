@@ -36,12 +36,15 @@ export default function SourceNewspaperCard({
   const [isFocused, setIsFocused] = useState(false);
   const [isMobileExpanded, setIsMobileExpanded] = useState(false);
 
+  const isTouchDevice = typeof window !== "undefined"
+    && window.matchMedia("(hover: none), (pointer: coarse)").matches;
+
   const fmtTime = (s: string | null | undefined) => {
     if (!s) return "";
     return s.replace("T", " ").replace("Z", "");
   };
 
-  const isExpanded = isHovered || isFocused || isMobileExpanded;
+  const isExpanded = isTouchDevice ? isMobileExpanded : isHovered || isFocused;
   const visibleCount = isExpanded ? articles.length : COLLAPSED_LIST_COUNT;
   const visibleItems = articles.slice(0, visibleCount);
 

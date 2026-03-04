@@ -53,7 +53,6 @@ function EventHeader({ event }: { event: EventDetailResponse["event"] }) {
       ) : null}
 
       <div className={styles.metaChips}>
-        <span className={styles.chip}>Event #{event.event_id}</span>
         <span className={styles.chip}>Articles {event.articles_count}</span>
         <span className={styles.chip}>Sources {event.sources_count}</span>
       </div>

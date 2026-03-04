@@ -33,7 +33,6 @@ function copyFor(lang: string) {
   if (lang === "zh") {
     return {
       back: "返回",
-      eventPrefix: "事件 #",
       articles: "文章",
       sources: "来源",
       empty: "该事件暂无文章。",
@@ -42,7 +41,6 @@ function copyFor(lang: string) {
 
   return {
     back: "Back",
-    eventPrefix: "Event #",
     articles: "Articles",
     sources: "Sources",
     empty: "No articles for this event yet.",
@@ -101,10 +99,6 @@ function EventHeader({
       ) : null}
 
       <div className={styles.metaChips}>
-        <span className={styles.chip}>
-          {t.eventPrefix}
-          {event.event_id}
-        </span>
         <span className={styles.chip}>
           {t.articles} {event.articles_count}
         </span>
