@@ -93,11 +93,17 @@ def _is_pending_fresh(updated_at: object) -> bool:
     return (datetime.now(timezone.utc) - ts) < timedelta(seconds=PENDING_RETRY_SECONDS)
 
 
+def _bootstrap_cache_table(db) -> None:
+    # Keep local-like behavior by default; can be disabled in strict production via env.
+    if AUTO_CREATE_TABLE:
+        db.execute(text(SQL_ENSURE_TABLE))
+
+
 def get_event_title_zh(event_id: int) -> dict:
     event_id = int(event_id)
     with SessionLocal() as db:
-        if AUTO_CREATE_TABLE:
-            db.execute(text(SQL_ENSURE_TABLE))
+        _bootstrap_cache_table(db)
+
         row = db.execute(text(SQL_GET_EVENT_TITLE), {"event_id": event_id}).mappings().first()
         if not row:
             return {
@@ -142,6 +148,10 @@ def get_event_title_zh(event_id: int) -> dict:
 
         if cached and (cached.get("source_title") or "").strip() == source_title:
             status = str(cached.get("status") or "")
+
+            # Core behavior from commit 5de0446:
+            # - fresh PENDING: avoid duplicate token usage
+            # - stale PENDING / ERROR: retry to self-heal after transient failures
             if status == "PENDING" and _is_pending_fresh(cached.get("updated_at")):
                 _log_cache_event(event_id, None, "PENDING", "pending_in_progress", cache_hit=True)
                 return {
@@ -153,8 +163,8 @@ def get_event_title_zh(event_id: int) -> dict:
                     "prompt_version": PROMPT_VERSION,
                     "cache_hit": True,
                 }
+
             if status in ("PENDING", "ERROR"):
-                # stale pending/error -> retry once in request path
                 _log_cache_event(event_id, None, "RETRY", status.lower(), cache_hit=False)
 
         claimed = False
