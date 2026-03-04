@@ -333,6 +333,30 @@ def get_event_detail(event_id: int, diversity: int = 0, debug: bool = False) -> 
     if not base_row:
       return {"event": None, "coverage": None, "gaps": None, "articles": []}
 
+    event_title = base_row["title"]
+    try:
+      settings = current_deepseek_settings()
+      model = settings["model"]
+      cached = db.execute(
+        text(SQL_EVENT_AI_CACHE_GET),
+        {
+          "event_id": event_id,
+          "provider": "deepseek",
+          "model": model,
+        },
+      ).mappings().first()
+      if cached and cached.get("status") == "SUCCESS":
+        output_json = cached.get("output_json") or {}
+        cached_title = output_json.get("title") if isinstance(output_json, dict) else None
+        if cached_title:
+          event_title = cached_title
+    except Exception as exc:
+      log_json(
+        "deepseek_event_detail_title_fallback",
+        event_id=event_id,
+        error_type=type(exc).__name__,
+      )
+
     article_rows = list(
       db.execute(text(SQL_EVENT_ARTICLES), {"event_id": event_id}).mappings()
     )
@@ -379,7 +403,7 @@ def get_event_detail(event_id: int, diversity: int = 0, debug: bool = False) -> 
   resp = {
     "event": {
       "event_id": base_row["event_id"],
-      "title": base_row["title"],
+      "title": event_title,
       "start_time": base_row["start_time"],
       "end_time": base_row["end_time"],
       "last_seen_at": base_row["last_seen_at"],
