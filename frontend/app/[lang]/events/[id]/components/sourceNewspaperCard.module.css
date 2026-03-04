@@ -90,12 +90,13 @@
 }
 
 .sourceName {
+  letter-spacing: -0.01em;
   margin: 0;
   font-size: 32px;
   line-height: 1.05;
   color: #262018;
   font-weight: 700;
-  font-family: var(--font-geist-sans), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  font-family: var(--font-news-serif);
 }
 
 .featuredCard .sourceName {
@@ -131,8 +132,9 @@
 }
 
 .articleLink {
+  font-style: italic;
   color: #2f2922;
-  font-family: var(--font-geist-sans), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  font-family: var(--font-news-serif);
   font-size: 16px;
   line-height: 1.35;
   font-weight: 600;
@@ -151,6 +153,7 @@
 }
 
 .articleTime {
+  font-family: var(--font-news-sans);
   margin-top: 4px;
   color: #6a5f53;
   font-size: 12px;
@@ -158,6 +161,7 @@
 }
 
 .mobileToggle {
+  font-family: var(--font-news-sans);
   margin-top: 10px;
   border: 0;
   background: transparent;
