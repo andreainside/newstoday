@@ -1,0 +1,114 @@
+.page {
+  max-width: 1320px;
+  margin: 34px auto 56px;
+  padding: 0 24px;
+}
+
+.backLink {
+  display: inline-block;
+  margin-bottom: 14px;
+  text-decoration: none;
+  color: #3f372f;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.backLink:hover {
+  color: #1e1b16;
+  text-decoration: underline;
+}
+
+.header {
+  padding: 6px 0 2px;
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(34px, 4vw, 62px);
+  line-height: 1.06;
+  letter-spacing: -0.02em;
+  color: #19150f;
+  font-weight: 800;
+}
+
+.timeLine {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #5f5549;
+}
+
+.metaChips {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #ddd1c0;
+  background: #f7f0e5;
+  color: #4b433a;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+}
+
+.groupedSection {
+  margin-top: 22px;
+}
+
+.emptyCard {
+  border: 1px solid #e8dfd2;
+  background: #fdfaf4;
+  border-radius: 14px;
+  color: #5d5449;
+  font-size: 14px;
+  padding: 20px;
+}
+
+.groupList {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.sourceCardWrap {
+  min-width: 0;
+}
+
+.featuredCardWrap {
+  grid-column: span 1;
+}
+
+@media (min-width: 900px) {
+  .groupList {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .featuredCardWrap {
+    grid-column: span 2;
+  }
+}
+
+@media (min-width: 1280px) {
+  .groupList {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+  }
+
+  .featuredCardWrap {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 720px) {
+  .page {
+    margin-top: 22px;
+    padding: 0 14px 30px;
+  }
+}

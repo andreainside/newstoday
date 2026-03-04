@@ -1,5 +1,13 @@
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from sqlalchemy import func
+
+_BACKEND_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _BACKEND_DIR.parent
+load_dotenv(_REPO_ROOT / ".env")
+load_dotenv(_BACKEND_DIR / ".env")
 
 from app.api.events import router as events_router
 from database import SessionLocal

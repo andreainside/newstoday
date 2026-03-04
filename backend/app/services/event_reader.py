@@ -1,16 +1,21 @@
 # app/services/event_reader.py
 from __future__ import annotations
 import math
+import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional,Tuple
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Result
 
 # 重要：只用 app.database，避免你根目录 database.py / app/database.py 混用
 from app.database import SessionLocal
 from app.services.article_types import effective_type
+from app.services.event_title_ai import (
+  current_deepseek_settings,
+  summarize_event_title,
+)
 
 # v0 固定口径参数（稳定、可复现）
 WINDOW_HOURS = 72
@@ -94,6 +99,48 @@ WHERE ea.event_id = :event_id
 ORDER BY a.published_at DESC NULLS LAST, a.id DESC;
 """
 
+SQL_EVENT_TITLES_FOR_TOP = """
+SELECT
+  ea.event_id,
+  a.title
+FROM event_articles ea
+JOIN articles a ON a.id = ea.article_id
+WHERE ea.event_id IN :event_ids
+ORDER BY ea.event_id ASC, a.published_at DESC NULLS LAST, a.id DESC;
+"""
+
+SQL_EVENT_AI_CACHE_UPSERT = """
+INSERT INTO event_ai_cache (event_id, input_hash, model, prompt_version, status, output_json, error, updated_at)
+VALUES (:event_id, :input_hash, :model, :prompt_version, :status, CAST(:output_json AS jsonb), :error, now())
+ON CONFLICT (event_id)
+DO UPDATE SET
+  input_hash = EXCLUDED.input_hash,
+  model = EXCLUDED.model,
+  prompt_version = EXCLUDED.prompt_version,
+  status = EXCLUDED.status,
+  output_json = EXCLUDED.output_json,
+  error = EXCLUDED.error,
+  updated_at = now();
+"""
+
+SQL_EVENT_AI_CACHE_GET = """
+SELECT status, output_json
+FROM event_ai_cache
+WHERE event_id = :event_id
+ORDER BY updated_at DESC
+LIMIT 1;
+"""
+
+SQL_EVENT_AI_CACHE_CLAIM = """
+INSERT INTO event_ai_cache (event_id, input_hash, model, prompt_version, status, output_json, error, updated_at)
+VALUES (:event_id, :input_hash, :model, :prompt_version, 'PENDING', NULL, NULL, now())
+ON CONFLICT (event_id) DO NOTHING
+RETURNING event_id;
+"""
+
+EVENT_TITLE_PROMPT_VERSION = "event_title_v1"
+EVENT_TITLE_INPUT_HASH = "top_titles_v1"
+
 def _utc_now() -> datetime:
   # 统一用 UTC，避免前后端时区混乱
   return datetime.now(timezone.utc)
@@ -135,6 +182,97 @@ def get_top_events(limit: int) -> Dict[str, Any]:
           },
         }
       )
+
+    try:
+      event_ids = [int(item["event_id"]) for item in items]
+      titles_map: Dict[int, List[str]] = defaultdict(list)
+      if event_ids:
+        title_stmt = text(SQL_EVENT_TITLES_FOR_TOP).bindparams(bindparam("event_ids", expanding=True))
+        title_rows = db.execute(
+          title_stmt,
+          {"event_ids": event_ids},
+        ).mappings()
+        for tr in title_rows:
+          event_id = int(tr["event_id"])
+          title = (tr["title"] or "").strip()
+          if title:
+            titles_map[event_id].append(title)
+
+      for item in items:
+        event_id = int(item["event_id"])
+        article_titles = titles_map.get(event_id, [])
+        if not article_titles:
+          continue
+
+        settings = current_deepseek_settings()
+        model = settings["model"]
+        cached = db.execute(
+          text(SQL_EVENT_AI_CACHE_GET),
+          {
+            "event_id": event_id,
+          },
+        ).mappings().first()
+        if cached and cached.get("status") == "SUCCESS":
+          output_json = cached.get("output_json") or {}
+          cached_title = output_json.get("title") if isinstance(output_json, dict) else None
+          if cached_title:
+            item["title"] = cached_title
+            continue
+        if cached and cached.get("status") in ("PENDING", "ERROR"):
+          continue
+
+        claim_row = db.execute(
+          text(SQL_EVENT_AI_CACHE_CLAIM),
+          {
+            "event_id": event_id,
+            "input_hash": EVENT_TITLE_INPUT_HASH,
+            "model": model,
+            "prompt_version": EVENT_TITLE_PROMPT_VERSION,
+          },
+        ).mappings().first()
+        if not claim_row:
+          continue
+
+        ai_result = summarize_event_title(article_titles)
+        if ai_result.get("ok") and ai_result.get("title"):
+          item["title"] = ai_result["title"]
+          db.execute(
+            text(SQL_EVENT_AI_CACHE_UPSERT),
+            {
+              "event_id": event_id,
+              "input_hash": EVENT_TITLE_INPUT_HASH,
+              "model": model,
+              "prompt_version": EVENT_TITLE_PROMPT_VERSION,
+              "status": "SUCCESS",
+              "output_json": json.dumps(
+                {
+                  "title": ai_result["title"],
+                  "sampled_titles": ai_result.get("sampled_titles", []),
+                  "total_article_titles": len(article_titles),
+                }
+              ),
+              "error": None,
+            },
+          )
+        else:
+          if ai_result.get("error") not in ("missing_deepseek_api_key", "empty_article_titles"):
+            db.execute(
+              text(SQL_EVENT_AI_CACHE_UPSERT),
+              {
+                "event_id": event_id,
+                "input_hash": EVENT_TITLE_INPUT_HASH,
+                "model": model,
+                "prompt_version": EVENT_TITLE_PROMPT_VERSION,
+                "status": "ERROR",
+                "output_json": None,
+                "error": str(ai_result.get("error") or "unknown_error")[:1000],
+              },
+            )
+
+      if items:
+        db.commit()
+    except Exception:
+      db.rollback()
 
   return {
     "as_of": as_of.isoformat(),

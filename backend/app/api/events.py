@@ -3,6 +3,7 @@ from app.services.event_reader import get_top_events, get_event_detail
 from app.services.coverage_matrix import get_coverage_matrix
 from app.services.gap_hints import get_gap_hints
 from app.services.event_ai import get_event_ai
+from app.services.event_title_translate import get_event_title_zh
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -20,6 +21,10 @@ def event_gaps(event_id: int):
 @router.get("/{event_id}/ai")
 def event_ai(event_id: int):
     return get_event_ai(event_id)
+
+@router.get("/{event_id}/title-zh")
+def event_title_zh(event_id: int):
+    return get_event_title_zh(event_id)
 
 
 @router.get("/top")
