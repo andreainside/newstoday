@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from sqlalchemy import func
 
 _BACKEND_DIR = Path(__file__).resolve().parent
@@ -26,9 +26,9 @@ def root():
     return {"message": "NewsToday API is running"}
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["HEAD", "GET"])
 def health():
-    return {"status": "ok"}
+    return Response(status_code=200)
 
 
 @app.get("/sources")
