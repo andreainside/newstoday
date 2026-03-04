@@ -13,21 +13,6 @@ PROMPT_VERSION = "title_zh_v1"
 PENDING_RETRY_SECONDS = int(os.getenv("EVENT_TITLE_ZH_PENDING_RETRY_SECONDS", "90"))
 AUTO_CREATE_TABLE = os.getenv("EVENT_TITLE_ZH_AUTO_CREATE_TABLE", "1") == "1"
 
-SQL_ENSURE_TABLE = """
-CREATE TABLE IF NOT EXISTS event_title_i18n_cache (
-  event_id bigint NOT NULL,
-  lang text NOT NULL,
-  source_title text NOT NULL,
-  translated_title text,
-  provider text,
-  model text,
-  status text NOT NULL DEFAULT 'PENDING',
-  error text,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (event_id, lang)
-);
-"""
-
 SQL_GET_EVENT_TITLE = """
 SELECT COALESCE(e.representative_title, e.title) AS title
 FROM events e
