@@ -1,6 +1,7 @@
 # app/services/event_reader.py
 from __future__ import annotations
 import math
+import os
 import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -11,6 +12,7 @@ from sqlalchemy.engine import Result
 
 # 重要：只用 app.database，避免你根目录 database.py / app/database.py 混用
 from app.database import SessionLocal
+from app.observability import log_json
 from app.services.article_types import effective_type
 from app.services.event_title_ai import (
   current_deepseek_settings,
@@ -110,13 +112,10 @@ ORDER BY ea.event_id ASC, a.published_at DESC NULLS LAST, a.id DESC;
 """
 
 SQL_EVENT_AI_CACHE_UPSERT = """
-INSERT INTO event_ai_cache (event_id, input_hash, model, prompt_version, status, output_json, error, updated_at)
-VALUES (:event_id, :input_hash, :model, :prompt_version, :status, CAST(:output_json AS jsonb), :error, now())
-ON CONFLICT (event_id)
+INSERT INTO event_ai_cache (event_id, provider, model, status, output_json, error, updated_at)
+VALUES (:event_id, :provider, :model, :status, CAST(:output_json AS jsonb), :error, now())
+ON CONFLICT (event_id, provider, model)
 DO UPDATE SET
-  input_hash = EXCLUDED.input_hash,
-  model = EXCLUDED.model,
-  prompt_version = EXCLUDED.prompt_version,
   status = EXCLUDED.status,
   output_json = EXCLUDED.output_json,
   error = EXCLUDED.error,
@@ -124,32 +123,55 @@ DO UPDATE SET
 """
 
 SQL_EVENT_AI_CACHE_GET = """
-SELECT status, output_json
+SELECT status, output_json, updated_at
 FROM event_ai_cache
-WHERE event_id = :event_id
+WHERE event_id = :event_id AND provider = :provider AND model = :model
 ORDER BY updated_at DESC
 LIMIT 1;
 """
 
 SQL_EVENT_AI_CACHE_CLAIM = """
-INSERT INTO event_ai_cache (event_id, input_hash, model, prompt_version, status, output_json, error, updated_at)
-VALUES (:event_id, :input_hash, :model, :prompt_version, 'PENDING', NULL, NULL, now())
-ON CONFLICT (event_id) DO NOTHING
+INSERT INTO event_ai_cache (event_id, provider, model, status, output_json, error, updated_at)
+VALUES (:event_id, :provider, :model, 'PENDING', NULL, NULL, now())
+ON CONFLICT (event_id, provider, model) DO NOTHING
 RETURNING event_id;
+"""
+
+SQL_ENSURE_EVENT_AI_CACHE = """
+CREATE TABLE IF NOT EXISTS event_ai_cache (
+  id bigserial PRIMARY KEY,
+  event_id bigint NOT NULL,
+  provider text NOT NULL,
+  model text NOT NULL,
+  status text NOT NULL DEFAULT 'PENDING',
+  output_json jsonb,
+  error text,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(event_id, provider, model)
+);
 """
 
 EVENT_TITLE_PROMPT_VERSION = "event_title_v1"
 EVENT_TITLE_INPUT_HASH = "top_titles_v1"
+EVENT_AI_PENDING_RETRY_SECONDS = int(os.getenv("EVENT_AI_PENDING_RETRY_SECONDS", "90"))
+EVENT_AI_AUTO_CREATE_TABLE = os.getenv("EVENT_AI_AUTO_CREATE_TABLE", "1") == "1"
 
 def _utc_now() -> datetime:
   # 统一用 UTC，避免前后端时区混乱
   return datetime.now(timezone.utc)
+
+
+def _bootstrap_event_ai_cache_table(db) -> None:
+  if EVENT_AI_AUTO_CREATE_TABLE:
+    db.execute(text(SQL_ENSURE_EVENT_AI_CACHE))
 
 def get_top_events(limit: int) -> Dict[str, Any]:
   limit = max(1, min(int(limit), 20))
   as_of = _utc_now()
 
   with SessionLocal() as db:
+    _bootstrap_event_ai_cache_table(db)
+
     rows: Result = db.execute(
       text(SQL_TOP_EVENTS),
       {
@@ -210,45 +232,63 @@ def get_top_events(limit: int) -> Dict[str, Any]:
           text(SQL_EVENT_AI_CACHE_GET),
           {
             "event_id": event_id,
+            "provider": "deepseek",
+            "model": model,
           },
         ).mappings().first()
         if cached and cached.get("status") == "SUCCESS":
           output_json = cached.get("output_json") or {}
           cached_title = output_json.get("title") if isinstance(output_json, dict) else None
           if cached_title:
+            log_json(
+              "deepseek_call",
+              event_id=event_id,
+              provider="deepseek",
+              model=model,
+              status="SUCCESS",
+              error_type=None,
+              http_status=None,
+              latency_ms=0,
+              cache_hit=True,
+            )
             item["title"] = cached_title
             continue
-        if cached and cached.get("status") in ("PENDING", "ERROR"):
-          continue
+        if cached and cached.get("status") == "PENDING":
+          updated_at = cached.get("updated_at")
+          if isinstance(updated_at, datetime):
+            ts = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
+            if (_utc_now() - ts).total_seconds() < EVENT_AI_PENDING_RETRY_SECONDS:
+              continue
+        # retry stale PENDING and previous ERROR entries
 
         claim_row = db.execute(
           text(SQL_EVENT_AI_CACHE_CLAIM),
           {
             "event_id": event_id,
-            "input_hash": EVENT_TITLE_INPUT_HASH,
+            "provider": "deepseek",
             "model": model,
-            "prompt_version": EVENT_TITLE_PROMPT_VERSION,
           },
         ).mappings().first()
         if not claim_row:
           continue
 
-        ai_result = summarize_event_title(article_titles)
+        ai_result = summarize_event_title(article_titles, event_id=event_id)
         if ai_result.get("ok") and ai_result.get("title"):
           item["title"] = ai_result["title"]
           db.execute(
             text(SQL_EVENT_AI_CACHE_UPSERT),
             {
               "event_id": event_id,
-              "input_hash": EVENT_TITLE_INPUT_HASH,
+              "provider": "deepseek",
               "model": model,
-              "prompt_version": EVENT_TITLE_PROMPT_VERSION,
               "status": "SUCCESS",
               "output_json": json.dumps(
                 {
                   "title": ai_result["title"],
                   "sampled_titles": ai_result.get("sampled_titles", []),
                   "total_article_titles": len(article_titles),
+                  "input_hash": EVENT_TITLE_INPUT_HASH,
+                  "prompt_version": EVENT_TITLE_PROMPT_VERSION,
                 }
               ),
               "error": None,
@@ -260,9 +300,8 @@ def get_top_events(limit: int) -> Dict[str, Any]:
               text(SQL_EVENT_AI_CACHE_UPSERT),
               {
                 "event_id": event_id,
-                "input_hash": EVENT_TITLE_INPUT_HASH,
+                "provider": "deepseek",
                 "model": model,
-                "prompt_version": EVENT_TITLE_PROMPT_VERSION,
                 "status": "ERROR",
                 "output_json": None,
                 "error": str(ai_result.get("error") or "unknown_error")[:1000],
@@ -271,7 +310,12 @@ def get_top_events(limit: int) -> Dict[str, Any]:
 
       if items:
         db.commit()
-    except Exception:
+    except Exception as exc:
+      log_json(
+        "deepseek_cache_pipeline_error",
+        error_type=type(exc).__name__,
+        error=str(exc),
+      )
       db.rollback()
 
   return {
