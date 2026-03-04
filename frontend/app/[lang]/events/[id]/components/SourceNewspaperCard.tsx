@@ -32,28 +32,21 @@ export default function SourceNewspaperCard({
   articles,
   isFeatured = false,
 }: Props) {
-  const [isHovered, setIsHovered] = useState(false);
-  const [isMobileExpanded, setIsMobileExpanded] = useState(false);
-
-  const isTouchDevice = typeof window !== "undefined"
-    && window.matchMedia("(hover: none), (pointer: coarse)").matches;
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const fmtTime = (s: string | null | undefined) => {
     if (!s) return "";
     return s.replace("T", " ").replace("Z", "");
   };
 
-  const isExpanded = isHovered || isMobileExpanded;
   const visibleCount = isExpanded ? articles.length : COLLAPSED_LIST_COUNT;
   const visibleItems = articles.slice(0, visibleCount);
 
   return (
     <article
       className={`${styles.sourceCard} ${isFeatured ? styles.featuredCard : ""} ${
-        isMobileExpanded ? styles.expanded : ""
+        isExpanded ? styles.expanded : ""
       }`}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
     >
       <div className={styles.sourceHeader}>
         <h2 className={styles.sourceName}>{sourceName}</h2>
@@ -77,9 +70,9 @@ export default function SourceNewspaperCard({
         <button
           type="button"
           className={styles.mobileToggle}
-          onClick={() => setIsMobileExpanded((prev) => !prev)}
+          onClick={() => setIsExpanded((prev) => !prev)}
         >
-          {isMobileExpanded ? "Show less" : "Show more"}
+          {isExpanded ? "Show less" : "Show more"}
         </button>
       ) : null}
     </article>

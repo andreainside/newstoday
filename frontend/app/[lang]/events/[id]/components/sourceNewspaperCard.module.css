@@ -43,7 +43,7 @@
 }
 
 .sourceCard:hover .listViewport {
-  max-height: 240rem;
+  max-height: 14rem;
 }
 
 .sourceCard:focus-within {
@@ -54,7 +54,7 @@
 }
 
 .sourceCard:focus-within .listViewport {
-  max-height: 240rem;
+  max-height: 14rem;
 }
 
 .sourceCard:hover::before,
@@ -132,7 +132,7 @@
 }
 
 .articleLink {
-  font-style: italic;
+  font-style: normal;
   color: #2f2922;
   font-family: var(--font-news-serif);
   font-size: 16px;
@@ -172,13 +172,7 @@
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 3px;
-  display: none;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .mobileToggle {
-    display: none;
-  }
+  display: inline-block;
 }
 
 @media (max-width: 899px) {
@@ -198,15 +192,7 @@
     max-height: 12.8rem;
   }
 
-  .sourceCard:hover .listViewport {
-    max-height: 12.8rem;
-  }
-
   .expanded .listViewport {
     max-height: 240rem;
-  }
-
-  .mobileToggle {
-    display: inline-block;
   }
 }

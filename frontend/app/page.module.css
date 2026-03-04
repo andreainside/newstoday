@@ -255,7 +255,7 @@
 
 .cardTitle {
   font-family: var(--font-news-serif);
-  font-style: italic;
+  font-style: normal;
   font-size: 18.5px;
   line-height: 1.2;
   letter-spacing: -0.01em;
