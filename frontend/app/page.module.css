@@ -12,7 +12,7 @@
   background-color: #f4f1ec;
   background: radial-gradient(1200px 600px at 20% 10%, #fbf8f3 0%, #f4f1ec 45%, #efe9e0 100%);
   color: var(--ink);
-  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, "Times New Roman", serif;
+  font-family: var(--font-news-sans);
 }
 
 .main {
@@ -80,6 +80,7 @@
 }
 
 .header h1 {
+  font-family: var(--font-news-serif);
   font-size: clamp(56px, 6vw, 72px);
   line-height: 1.05;
   letter-spacing: -0.02em;
@@ -88,6 +89,7 @@
 }
 
 .subtitle {
+  font-family: var(--font-news-sans);
   max-width: 560px;
   font-size: 17px;
   line-height: 1.45;
@@ -161,11 +163,12 @@
 }
 
 .placeholderText {
+  font-family: var(--font-news-serif);
   position: relative;
   z-index: 2;
   font-size: 20.5px;
   line-height: 1.2;
-  font-weight: 650;
+  font-weight: 700;
   color: rgba(243, 241, 238, 0.9);
   padding: 0 18px;
   transform: scale(1);
@@ -251,16 +254,20 @@
 }
 
 .cardTitle {
+  font-family: var(--font-news-serif);
+  font-style: italic;
   font-size: 18.5px;
   line-height: 1.2;
   letter-spacing: -0.01em;
-  font-weight: 650;
+  font-weight: 700;
   color: #f3f1ee;
+  text-wrap: balance;
   display: block;
   overflow: visible;
 }
 
 .cardMeta {
+  font-family: var(--font-news-sans);
   font-size: 12px;
   color: rgba(243, 241, 238, 0.68);
   font-weight: 500;

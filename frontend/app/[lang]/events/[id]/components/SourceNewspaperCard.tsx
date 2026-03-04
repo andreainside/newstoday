@@ -35,6 +35,9 @@ export default function SourceNewspaperCard({
   const [isHovered, setIsHovered] = useState(false);
   const [isMobileExpanded, setIsMobileExpanded] = useState(false);
 
+  const isTouchDevice = typeof window !== "undefined"
+    && window.matchMedia("(hover: none), (pointer: coarse)").matches;
+
   const fmtTime = (s: string | null | undefined) => {
     if (!s) return "";
     return s.replace("T", " ").replace("Z", "");
