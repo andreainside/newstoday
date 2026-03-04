@@ -335,8 +335,7 @@
   }
 
   .header h1 {
-    font-family: var(--font-news-serif);
-    font-size: clamp(40px, 9vw, 56px);
+      font-size: clamp(40px, 9vw, 56px);
   }
 
   .rail {
