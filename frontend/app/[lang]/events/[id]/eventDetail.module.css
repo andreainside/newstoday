@@ -23,15 +23,17 @@
 }
 
 .title {
+  font-family: var(--font-news-serif);
   margin: 0;
   font-size: clamp(34px, 4vw, 62px);
   line-height: 1.06;
   letter-spacing: -0.02em;
   color: #19150f;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .timeLine {
+  font-family: var(--font-news-sans);
   margin-top: 10px;
   font-size: 13px;
   color: #5f5549;
@@ -45,6 +47,7 @@
 }
 
 .chip {
+  font-family: var(--font-news-sans);
   display: inline-flex;
   align-items: center;
   border: 1px solid #ddd1c0;
@@ -110,5 +113,11 @@
   .page {
     margin-top: 22px;
     padding: 0 14px 30px;
+  }
+
+  .title {
+    font-size: clamp(32px, 8.5vw, 42px);
+    font-weight: 800;
+    letter-spacing: -0.01em;
   }
 }
