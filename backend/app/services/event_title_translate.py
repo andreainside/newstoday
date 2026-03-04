@@ -1,13 +1,34 @@
 from __future__ import annotations
 
+import os
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import text
 
 from app.database import SessionLocal
+from app.observability import log_json
 from app.services.event_title_ai import translate_title_to_zh
 
 PROMPT_VERSION = "title_zh_v1"
+PENDING_RETRY_SECONDS = int(os.getenv("EVENT_TITLE_ZH_PENDING_RETRY_SECONDS", "90"))
+AUTO_CREATE_TABLE = os.getenv("EVENT_TITLE_ZH_AUTO_CREATE_TABLE", "1") == "1"
 
 SQL_ENSURE_TABLE = """
+CREATE TABLE IF NOT EXISTS event_title_i18n_cache (
+  event_id bigint NOT NULL,
+  lang text NOT NULL,
+  source_title text NOT NULL,
+  translated_title text,
+  provider text,
+  model text,
+  status text NOT NULL DEFAULT 'PENDING',
+  error text,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (event_id, lang)
+);
+"""
+
+FALLBACK_SQL_ENSURE_TABLE = """
 CREATE TABLE IF NOT EXISTS event_title_i18n_cache (
   event_id bigint NOT NULL,
   lang text NOT NULL,
@@ -33,6 +54,16 @@ SQL_GET_CACHE = """
 SELECT source_title, translated_title, status, error, updated_at
 FROM event_title_i18n_cache
 WHERE event_id = :event_id AND lang = 'zh'
+LIMIT 1;
+"""
+
+SQL_GET_AI_SUMMARY_TITLE = """
+SELECT output_json->>'title' AS title
+FROM event_ai_cache
+WHERE event_id = :event_id
+  AND provider = 'deepseek'
+  AND status = 'SUCCESS'
+ORDER BY updated_at DESC
 LIMIT 1;
 """
 
@@ -66,10 +97,53 @@ DO UPDATE SET
 """
 
 
+def _log_cache_event(event_id: int, model: str | None, status: str, error: str | None, cache_hit: bool) -> None:
+    log_json(
+        "deepseek_call",
+        event_id=event_id,
+        provider="deepseek",
+        model=model,
+        status=status,
+        error_type=error,
+        http_status=None,
+        latency_ms=0,
+        cache_hit=cache_hit,
+    )
+
+
+def _is_pending_fresh(updated_at: object) -> bool:
+    if not isinstance(updated_at, datetime):
+        return False
+    ts = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts) < timedelta(seconds=PENDING_RETRY_SECONDS)
+
+
+def _bootstrap_cache_table(db) -> None:
+    # Keep local-like behavior by default; can be disabled in strict production via env.
+    # Defensive fallback: if conflict resolution accidentally drops SQL_ENSURE_TABLE,
+    # keep runtime behavior functional instead of crashing with NameError.
+    if AUTO_CREATE_TABLE:
+        ddl = globals().get("SQL_ENSURE_TABLE") or FALLBACK_SQL_ENSURE_TABLE
+        db.execute(text(ddl))
+
+
+def _pick_translation_source_title(db, event_id: int, fallback_title: str) -> str:
+    # Prefer the generated English summary when available, so zh translation tracks
+    # the same content shown in /en.
+    try:
+        row = db.execute(text(SQL_GET_AI_SUMMARY_TITLE), {"event_id": event_id}).mappings().first()
+        ai_title = ((row or {}).get("title") or "").strip()
+        if ai_title:
+            return ai_title
+    except Exception as exc:
+        log_json("deepseek_translate_source_fallback", event_id=event_id, error_type=type(exc).__name__)
+    return fallback_title
+
+
 def get_event_title_zh(event_id: int) -> dict:
     event_id = int(event_id)
     with SessionLocal() as db:
-        db.execute(text(SQL_ENSURE_TABLE))
+        _bootstrap_cache_table(db)
 
         row = db.execute(text(SQL_GET_EVENT_TITLE), {"event_id": event_id}).mappings().first()
         if not row:
@@ -80,9 +154,14 @@ def get_event_title_zh(event_id: int) -> dict:
                 "title": None,
                 "source_title": None,
                 "prompt_version": PROMPT_VERSION,
+                "cache_hit": False,
             }
 
-        source_title = (row["title"] or "").strip()
+        source_title = _pick_translation_source_title(
+            db,
+            event_id=event_id,
+            fallback_title=(row["title"] or "").strip(),
+        )
         if not source_title:
             return {
                 "event_id": event_id,
@@ -91,6 +170,7 @@ def get_event_title_zh(event_id: int) -> dict:
                 "title": None,
                 "source_title": source_title,
                 "prompt_version": PROMPT_VERSION,
+                "cache_hit": False,
             }
 
         cached = db.execute(text(SQL_GET_CACHE), {"event_id": event_id}).mappings().first()
@@ -100,6 +180,7 @@ def get_event_title_zh(event_id: int) -> dict:
             and (cached.get("source_title") or "").strip() == source_title
             and (cached.get("translated_title") or "").strip()
         ):
+            _log_cache_event(event_id, None, "SUCCESS", None, cache_hit=True)
             return {
                 "event_id": event_id,
                 "lang": "zh",
@@ -107,24 +188,29 @@ def get_event_title_zh(event_id: int) -> dict:
                 "title": cached["translated_title"],
                 "source_title": source_title,
                 "prompt_version": PROMPT_VERSION,
+                "cache_hit": True,
             }
 
-        # Avoid duplicate token usage:
-        # - if another request is already processing this exact source title, do not call LLM again.
-        if (
-            cached
-            and (cached.get("source_title") or "").strip() == source_title
-            and cached.get("status") in ("PENDING", "ERROR")
-        ):
-            return {
-                "event_id": event_id,
-                "lang": "zh",
-                "status": cached.get("status"),
-                "title": source_title,
-                "source_title": source_title,
-                "prompt_version": PROMPT_VERSION,
-                "error": cached.get("error"),
-            }
+        if cached and (cached.get("source_title") or "").strip() == source_title:
+            status = str(cached.get("status") or "")
+
+            # Core behavior from commit 5de0446:
+            # - fresh PENDING: avoid duplicate token usage
+            # - stale PENDING / ERROR: retry to self-heal after transient failures
+            if status == "PENDING" and _is_pending_fresh(cached.get("updated_at")):
+                _log_cache_event(event_id, None, "PENDING", "pending_in_progress", cache_hit=True)
+                return {
+                    "event_id": event_id,
+                    "lang": "zh",
+                    "status": "PENDING",
+                    "title": source_title,
+                    "source_title": source_title,
+                    "prompt_version": PROMPT_VERSION,
+                    "cache_hit": True,
+                }
+
+            if status in ("PENDING", "ERROR"):
+                _log_cache_event(event_id, None, "RETRY", status.lower(), cache_hit=False)
 
         claimed = False
         if cached is None:
@@ -138,7 +224,6 @@ def get_event_title_zh(event_id: int) -> dict:
             claimed = bool(claim_row)
             db.commit()
         else:
-            # source title changed -> refresh to pending and let current request recompute once
             db.execute(
                 text(SQL_UPSERT_CACHE),
                 {
@@ -155,6 +240,7 @@ def get_event_title_zh(event_id: int) -> dict:
             claimed = True
 
         if not claimed:
+            _log_cache_event(event_id, None, "PENDING", "cache_claim_failed", cache_hit=True)
             return {
                 "event_id": event_id,
                 "lang": "zh",
@@ -162,9 +248,10 @@ def get_event_title_zh(event_id: int) -> dict:
                 "title": source_title,
                 "source_title": source_title,
                 "prompt_version": PROMPT_VERSION,
+                "cache_hit": True,
             }
 
-        result = translate_title_to_zh(source_title)
+        result = translate_title_to_zh(source_title, event_id=event_id)
         if result.get("ok") and result.get("translated_title"):
             db.execute(
                 text(SQL_UPSERT_CACHE),
@@ -186,6 +273,7 @@ def get_event_title_zh(event_id: int) -> dict:
                 "title": result["translated_title"],
                 "source_title": source_title,
                 "prompt_version": PROMPT_VERSION,
+                "cache_hit": False,
             }
 
         db.execute(
@@ -209,4 +297,5 @@ def get_event_title_zh(event_id: int) -> dict:
             "source_title": source_title,
             "prompt_version": PROMPT_VERSION,
             "error": result.get("error"),
+            "cache_hit": False,
         }
