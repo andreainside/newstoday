@@ -28,6 +28,21 @@ CREATE TABLE IF NOT EXISTS event_title_i18n_cache (
 );
 """
 
+FALLBACK_SQL_ENSURE_TABLE = """
+CREATE TABLE IF NOT EXISTS event_title_i18n_cache (
+  event_id bigint NOT NULL,
+  lang text NOT NULL,
+  source_title text NOT NULL,
+  translated_title text,
+  provider text,
+  model text,
+  status text NOT NULL DEFAULT 'PENDING',
+  error text,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (event_id, lang)
+);
+"""
+
 SQL_GET_EVENT_TITLE = """
 SELECT COALESCE(e.representative_title, e.title) AS title
 FROM events e
@@ -95,8 +110,11 @@ def _is_pending_fresh(updated_at: object) -> bool:
 
 def _bootstrap_cache_table(db) -> None:
     # Keep local-like behavior by default; can be disabled in strict production via env.
+    # Defensive fallback: if conflict resolution accidentally drops SQL_ENSURE_TABLE,
+    # keep runtime behavior functional instead of crashing with NameError.
     if AUTO_CREATE_TABLE:
-        db.execute(text(SQL_ENSURE_TABLE))
+        ddl = globals().get("SQL_ENSURE_TABLE") or FALLBACK_SQL_ENSURE_TABLE
+        db.execute(text(ddl))
 
 
 def get_event_title_zh(event_id: int) -> dict:
