@@ -57,6 +57,16 @@ WHERE event_id = :event_id AND lang = 'zh'
 LIMIT 1;
 """
 
+SQL_GET_AI_SUMMARY_TITLE = """
+SELECT output_json->>'title' AS title
+FROM event_ai_cache
+WHERE event_id = :event_id
+  AND provider = 'deepseek'
+  AND status = 'SUCCESS'
+ORDER BY updated_at DESC
+LIMIT 1;
+"""
+
 SQL_CLAIM_PENDING = """
 INSERT INTO event_title_i18n_cache (
   event_id, lang, source_title, translated_title, provider, model, status, error, updated_at
@@ -117,6 +127,19 @@ def _bootstrap_cache_table(db) -> None:
         db.execute(text(ddl))
 
 
+def _pick_translation_source_title(db, event_id: int, fallback_title: str) -> str:
+    # Prefer the generated English summary when available, so zh translation tracks
+    # the same content shown in /en.
+    try:
+        row = db.execute(text(SQL_GET_AI_SUMMARY_TITLE), {"event_id": event_id}).mappings().first()
+        ai_title = ((row or {}).get("title") or "").strip()
+        if ai_title:
+            return ai_title
+    except Exception as exc:
+        log_json("deepseek_translate_source_fallback", event_id=event_id, error_type=type(exc).__name__)
+    return fallback_title
+
+
 def get_event_title_zh(event_id: int) -> dict:
     event_id = int(event_id)
     with SessionLocal() as db:
@@ -134,7 +157,11 @@ def get_event_title_zh(event_id: int) -> dict:
                 "cache_hit": False,
             }
 
-        source_title = (row["title"] or "").strip()
+        source_title = _pick_translation_source_title(
+            db,
+            event_id=event_id,
+            fallback_title=(row["title"] or "").strip(),
+        )
         if not source_title:
             return {
                 "event_id": event_id,
