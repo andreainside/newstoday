@@ -95,7 +95,7 @@
   line-height: 1.05;
   color: #262018;
   font-weight: 700;
-  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  font-family: var(--font-geist-sans), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
 }
 
 .featuredCard .sourceName {
@@ -132,7 +132,7 @@
 
 .articleLink {
   color: #2f2922;
-  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  font-family: var(--font-geist-sans), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   font-size: 16px;
   line-height: 1.35;
   font-weight: 600;

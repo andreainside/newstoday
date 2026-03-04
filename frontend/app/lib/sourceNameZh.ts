@@ -41,10 +41,32 @@ const SOURCE_NAME_ZH_MAP: Record<string, string> = {
   "Hong Kong Free Press": "香港自由新闻",
   "BBC Chinese": "BBC中文",
   "FT Chinese": "英国《金融时报》中文网",
+  "Al Jazeera News": "半岛电视台新闻",
+  "BBC Middle East": "BBC中东",
 };
+
+const SOURCE_NAME_ZH_ALIAS_MAP: Record<string, string> = Object.fromEntries(
+  Object.entries(SOURCE_NAME_ZH_MAP).map(([name, zh]) => [name.toLowerCase(), zh]),
+);
+
+const SOURCE_NAME_ZH_RULES: Array<{ pattern: RegExp; zh: string }> = [
+  { pattern: /^al jazeera(\s|$)/i, zh: "半岛电视台" },
+  { pattern: /^bbc\s+middle\s+east/i, zh: "BBC中东" },
+  { pattern: /^bbc(\s|$)/i, zh: "BBC新闻" },
+];
 
 export function toSourceNameZh(name: string): string {
   const normalized = (name || "").trim();
   if (!normalized) return name;
-  return SOURCE_NAME_ZH_MAP[normalized] || normalized;
+
+  const alias = SOURCE_NAME_ZH_ALIAS_MAP[normalized.toLowerCase()];
+  if (alias) return alias;
+
+  for (const rule of SOURCE_NAME_ZH_RULES) {
+    if (rule.pattern.test(normalized)) {
+      return rule.zh;
+    }
+  }
+
+  return normalized;
 }
