@@ -4,6 +4,11 @@ from app.services.coverage_matrix import get_coverage_matrix
 from app.services.gap_hints import get_gap_hints
 from app.services.event_ai import get_event_ai
 from app.services.event_title_translate import get_event_title_zh
+from app.services.event_title_ai import (
+    current_deepseek_settings,
+    get_last_deepseek_call_status,
+    probe_deepseek_connectivity,
+)
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -22,14 +27,31 @@ def event_gaps(event_id: int):
 def event_ai(event_id: int):
     return get_event_ai(event_id)
 
+
 @router.get("/{event_id}/title-zh")
 def event_title_zh(event_id: int):
     return get_event_title_zh(event_id)
 
 
+@router.get("/ai-health")
+def ai_health(probe: int = Query(0, ge=0, le=1)):
+    settings = current_deepseek_settings()
+    payload = {
+        "provider": settings["provider"],
+        "model": settings["model"],
+        "has_api_key": bool(settings["api_key"]),
+        "base_url_configured": bool(settings["base_url"]),
+        "last_call": get_last_deepseek_call_status(),
+    }
+    if probe:
+        payload["connectivity"] = probe_deepseek_connectivity(timeout_seconds=2.0)
+    return payload
+
+
 @router.get("/top")
 def top_events(limit: int = Query(5, ge=1, le=20)):
     return get_top_events(limit)
+
 
 @router.get("/{event_id}")
 def event_detail(
@@ -45,4 +67,3 @@ def event_detail(
     if data.get("event") is None:
         raise HTTPException(status_code=404, detail="event not found")
     return data
-
