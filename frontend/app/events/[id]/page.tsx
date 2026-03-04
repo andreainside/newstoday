@@ -1,4 +1,5 @@
-﻿import Link from "next/link";
+import Link from "next/link";
+import SourceNewspaperCard, { type SourceArticle } from "./components/SourceNewspaperCard";
 import styles from "./eventDetail.module.css";
 
 type EventDetailResponse = {
@@ -11,19 +12,7 @@ type EventDetailResponse = {
     articles_count: number;
     sources_count: number;
   };
-  articles: Array<{
-    article_id: number;
-    published_at: string | null;
-    title: string;
-    link: string;
-    type: string | null;
-    type_reason: string | null;
-    source: {
-      source_id: number;
-      name: string;
-      url: string;
-    };
-  }>;
+  articles: Array<SourceArticle>;
 };
 
 function fmtTime(s: string | null | undefined) {
@@ -87,6 +76,7 @@ function GroupedArticleList({ articles }: { articles: EventDetailResponse["artic
     if (countDiff !== 0) return countDiff;
     return a[0].localeCompare(b[0]);
   });
+  const featuredSourceName = sortedGroups.length > 0 ? sortedGroups[0][0] : null;
 
   return (
     <section className={styles.groupedSection}>
@@ -96,42 +86,20 @@ function GroupedArticleList({ articles }: { articles: EventDetailResponse["artic
 
       <div className={styles.groupList}>
         {sortedGroups.map(([sourceName, sourceArticles]) => (
-          <article key={sourceName} className={styles.sourceCard}>
-            <div className={styles.sourceHeader}>
-              <h2 className={styles.sourceName}>{sourceName}</h2>
-              <span className={styles.articleCountBadge}>{sourceArticles.length} articles</span>
-            </div>
-
-            <div className={styles.articleList}>
-              {sourceArticles.slice(0, 5).map((a) => (
-                <div key={a.article_id} className={styles.articleItem}>
-                  <a href={a.link} target="_blank" rel="noreferrer" className={styles.articleLink}>
-                    {a.title}
-                  </a>
-                  <div className={styles.articleTime}>{fmtTime(a.published_at)}</div>
-                </div>
-              ))}
-            </div>
-
-            {sourceArticles.length > 5 ? (
-              <details className={styles.moreBlock}>
-                <summary className={styles.moreButton}>
-                  <span className={styles.moreLabel}>Show more</span>
-                  <span className={styles.lessLabel}>Show less</span>
-                </summary>
-                <div className={styles.articleList}>
-                  {sourceArticles.slice(5).map((a) => (
-                    <div key={a.article_id} className={styles.articleItem}>
-                      <a href={a.link} target="_blank" rel="noreferrer" className={styles.articleLink}>
-                        {a.title}
-                      </a>
-                      <div className={styles.articleTime}>{fmtTime(a.published_at)}</div>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            ) : null}
-          </article>
+          <div
+            key={sourceName}
+            className={
+              sourceName === featuredSourceName
+                ? `${styles.sourceCardWrap} ${styles.featuredCardWrap}`
+                : styles.sourceCardWrap
+            }
+          >
+            <SourceNewspaperCard
+              sourceName={sourceName}
+              articles={sourceArticles}
+              isFeatured={sourceName === featuredSourceName}
+            />
+          </div>
         ))}
       </div>
     </section>
