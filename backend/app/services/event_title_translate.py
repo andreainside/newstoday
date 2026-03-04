@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import text
 
 from app.database import SessionLocal
@@ -7,6 +10,8 @@ from app.observability import log_json
 from app.services.event_title_ai import translate_title_to_zh
 
 PROMPT_VERSION = "title_zh_v1"
+PENDING_RETRY_SECONDS = int(os.getenv("EVENT_TITLE_ZH_PENDING_RETRY_SECONDS", "90"))
+AUTO_CREATE_TABLE = os.getenv("EVENT_TITLE_ZH_AUTO_CREATE_TABLE", "1") == "1"
 
 SQL_GET_EVENT_TITLE = """
 SELECT COALESCE(e.representative_title, e.title) AS title
@@ -66,9 +71,24 @@ def _log_cache_event(event_id: int, model: str | None, status: str, error: str |
     )
 
 
+def _is_pending_fresh(updated_at: object) -> bool:
+    if not isinstance(updated_at, datetime):
+        return False
+    ts = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts) < timedelta(seconds=PENDING_RETRY_SECONDS)
+
+
+def _bootstrap_cache_table(db) -> None:
+    # Keep local-like behavior by default; can be disabled in strict production via env.
+    if AUTO_CREATE_TABLE:
+        db.execute(text(SQL_ENSURE_TABLE))
+
+
 def get_event_title_zh(event_id: int) -> dict:
     event_id = int(event_id)
     with SessionLocal() as db:
+        _bootstrap_cache_table(db)
+
         row = db.execute(text(SQL_GET_EVENT_TITLE), {"event_id": event_id}).mappings().first()
         if not row:
             return {
@@ -111,22 +131,26 @@ def get_event_title_zh(event_id: int) -> dict:
                 "cache_hit": True,
             }
 
-        if (
-            cached
-            and (cached.get("source_title") or "").strip() == source_title
-            and cached.get("status") in ("PENDING", "ERROR")
-        ):
-            _log_cache_event(event_id, None, str(cached.get("status")), str(cached.get("error")), cache_hit=True)
-            return {
-                "event_id": event_id,
-                "lang": "zh",
-                "status": cached.get("status"),
-                "title": source_title,
-                "source_title": source_title,
-                "prompt_version": PROMPT_VERSION,
-                "error": cached.get("error"),
-                "cache_hit": True,
-            }
+        if cached and (cached.get("source_title") or "").strip() == source_title:
+            status = str(cached.get("status") or "")
+
+            # Core behavior from commit 5de0446:
+            # - fresh PENDING: avoid duplicate token usage
+            # - stale PENDING / ERROR: retry to self-heal after transient failures
+            if status == "PENDING" and _is_pending_fresh(cached.get("updated_at")):
+                _log_cache_event(event_id, None, "PENDING", "pending_in_progress", cache_hit=True)
+                return {
+                    "event_id": event_id,
+                    "lang": "zh",
+                    "status": "PENDING",
+                    "title": source_title,
+                    "source_title": source_title,
+                    "prompt_version": PROMPT_VERSION,
+                    "cache_hit": True,
+                }
+
+            if status in ("PENDING", "ERROR"):
+                _log_cache_event(event_id, None, "RETRY", status.lower(), cache_hit=False)
 
         claimed = False
         if cached is None:

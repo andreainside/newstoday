@@ -1,6 +1,7 @@
 # app/services/event_reader.py
 from __future__ import annotations
 import math
+import os
 import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -122,7 +123,7 @@ DO UPDATE SET
 """
 
 SQL_EVENT_AI_CACHE_GET = """
-SELECT status, output_json
+SELECT status, output_json, updated_at
 FROM event_ai_cache
 WHERE event_id = :event_id AND provider = :provider AND model = :model
 ORDER BY updated_at DESC
@@ -138,6 +139,7 @@ RETURNING event_id;
 
 EVENT_TITLE_PROMPT_VERSION = "event_title_v1"
 EVENT_TITLE_INPUT_HASH = "top_titles_v1"
+EVENT_AI_PENDING_RETRY_SECONDS = int(os.getenv("EVENT_AI_PENDING_RETRY_SECONDS", "90"))
 
 def _utc_now() -> datetime:
   # 统一用 UTC，避免前后端时区混乱
@@ -229,8 +231,13 @@ def get_top_events(limit: int) -> Dict[str, Any]:
             )
             item["title"] = cached_title
             continue
-        if cached and cached.get("status") in ("PENDING", "ERROR"):
-          continue
+        if cached and cached.get("status") == "PENDING":
+          updated_at = cached.get("updated_at")
+          if isinstance(updated_at, datetime):
+            ts = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
+            if (_utc_now() - ts).total_seconds() < EVENT_AI_PENDING_RETRY_SECONDS:
+              continue
+        # retry stale PENDING and previous ERROR entries
 
         claim_row = db.execute(
           text(SQL_EVENT_AI_CACHE_CLAIM),
