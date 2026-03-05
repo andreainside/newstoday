@@ -23,14 +23,31 @@ export type TopEventsResponse = {
   items: TopEvent[];
 };
 
+function emptyTopEventsResponse(): TopEventsResponse {
+  return {
+    as_of: new Date().toISOString(),
+    window_hours: 24,
+    tau_hours: 6,
+    weights: { hot: 1, div: 1, fresh: 1 },
+    items: [],
+  };
+}
+
 export async function fetchTopEvents(limit = 5): Promise<TopEventsResponse> {
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
-  const res = await fetch(`${API_BASE}/api/events/top?limit=${limit}`, { cache: "no-store" });
+  const API_BASE = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Failed to fetch top events: ${res.status} ${text}`);
+  try {
+    const res = await fetch(`${API_BASE}/api/events/top?limit=${limit}`, { cache: "no-store" });
+
+    if (!res.ok) {
+      const text = await res.text();
+      console.error(`Failed to fetch top events: ${res.status} ${text}`);
+      return emptyTopEventsResponse();
+    }
+
+    return res.json();
+  } catch (error) {
+    console.error("Failed to fetch top events:", error);
+    return emptyTopEventsResponse();
   }
-
-  return res.json();
 }
