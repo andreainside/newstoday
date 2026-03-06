@@ -36,20 +36,25 @@ async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
 function EventHeader({ event }: { event: EventDetailResponse["event"] }) {
   const hasStart = !!event.start_time;
   const hasEnd = !!event.end_time;
-  const timeLine = hasStart && hasEnd
+  const eventRange = hasStart && hasEnd
     ? `${fmtTime(event.start_time)} ~ ${fmtTime(event.end_time)}`
     : hasStart
       ? fmtTime(event.start_time)
       : hasEnd
         ? fmtTime(event.end_time)
         : "";
+  const lastSeen = fmtTime(event.last_seen_at);
 
   return (
     <section className={styles.header}>
       <h1 className={styles.title}>{event.title}</h1>
 
-      {timeLine ? (
-        <div className={styles.timeLine}>{timeLine}</div>
+      {eventRange ? (
+        <div className={styles.timeLine}>Event coverage: {eventRange}</div>
+      ) : null}
+
+      {lastSeen ? (
+        <div className={styles.timeLine}>Last article update: {lastSeen}</div>
       ) : null}
 
       <div className={styles.metaChips}>
