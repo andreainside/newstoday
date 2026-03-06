@@ -36,6 +36,8 @@ function copyFor(lang: string) {
       articles: "文章",
       sources: "来源",
       empty: "该事件暂无文章。",
+      eventCoverage: "事件覆盖时间",
+      lastArticleUpdate: "最后一篇文章更新时间",
     };
   }
 
@@ -44,6 +46,8 @@ function copyFor(lang: string) {
     articles: "Articles",
     sources: "Sources",
     empty: "No articles for this event yet.",
+    eventCoverage: "Event coverage",
+    lastArticleUpdate: "Last article update",
   };
 }
 
@@ -82,20 +86,25 @@ function EventHeader({
 }) {
   const hasStart = !!event.start_time;
   const hasEnd = !!event.end_time;
-  const timeLine = hasStart && hasEnd
+  const eventRange = hasStart && hasEnd
     ? `${fmtTime(event.start_time)} ~ ${fmtTime(event.end_time)}`
     : hasStart
       ? fmtTime(event.start_time)
       : hasEnd
         ? fmtTime(event.end_time)
         : "";
+  const lastSeen = fmtTime(event.last_seen_at);
 
   return (
     <section className={styles.header}>
       <h1 className={styles.title}>{event.title}</h1>
 
-      {timeLine ? (
-        <div className={styles.timeLine}>{timeLine}</div>
+      {eventRange ? (
+        <div className={styles.timeLine}>{t.eventCoverage}: {eventRange}</div>
+      ) : null}
+
+      {lastSeen ? (
+        <div className={styles.timeLine}>{t.lastArticleUpdate}: {lastSeen}</div>
       ) : null}
 
       <div className={styles.metaChips}>
@@ -128,7 +137,15 @@ function GroupedArticleList({
     return acc;
   }, {});
 
+  const latestArticleTs = (items: EventDetailResponse["articles"]) => {
+    const firstWithTs = items.find((it) => !!it.published_at);
+    return firstWithTs?.published_at ? Date.parse(firstWithTs.published_at) : Number.NEGATIVE_INFINITY;
+  };
+
   const sortedGroups = Object.entries(groupedBySource).sort((a, b) => {
+    const latestDiff = latestArticleTs(b[1]) - latestArticleTs(a[1]);
+    if (latestDiff !== 0) return latestDiff;
+
     const countDiff = b[1].length - a[1].length;
     if (countDiff !== 0) return countDiff;
     return a[0].localeCompare(b[0]);
