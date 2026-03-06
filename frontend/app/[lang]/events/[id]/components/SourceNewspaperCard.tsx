@@ -36,7 +36,9 @@ export default function SourceNewspaperCard({
 
   const fmtTime = (s: string | null | undefined) => {
     if (!s) return "";
-    return s.replace("T", " ").replace("Z", "");
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toISOString().slice(0, 16).replace("T", " ");
   };
 
   const visibleCount = isExpanded ? articles.length : COLLAPSED_LIST_COUNT;
