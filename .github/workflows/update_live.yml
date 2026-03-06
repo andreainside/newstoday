@@ -21,6 +21,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          cache-dependency-path: backend/requirements.txt
 
       - name: Cache HuggingFace models
         uses: actions/cache@v4
@@ -28,7 +29,7 @@ jobs:
           path: |
             ~/.cache/huggingface
             ~/.cache/torch/sentence_transformers
-          key: hf-cache-${{ runner.os }}-py311-${{ hashFiles('backend/requirements.txt') }}
+          key: hf-cache-${{ runner.os }}-py311-v1
           restore-keys: |
             hf-cache-${{ runner.os }}-py311-
 
@@ -41,7 +42,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: backend
-        run: pip install -r requirements.txt
+        run: pip install --disable-pip-version-check --prefer-binary -r requirements.txt
 
       - name: Run live update
         working-directory: backend
