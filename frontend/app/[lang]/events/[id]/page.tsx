@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { toSourceNameZh } from "../../../lib/sourceNameZh";
 import SourceNewspaperCard, { type SourceArticle } from "./components/SourceNewspaperCard";
 import styles from "./eventDetail.module.css";
+
+const SUPPORTED_LANGS = new Set(["en", "zh"]);
 
 type EventDetailResponse = {
   event: {
@@ -14,6 +17,11 @@ type EventDetailResponse = {
     sources_count: number;
   };
   articles: Array<SourceArticle>;
+};
+
+type EventTitleZhResponse = {
+  title: string | null;
+  status: string;
 };
 
 function parseTime(s: string | null | undefined): Date | null {
@@ -53,6 +61,28 @@ function resolveCoverageRange(
   };
 }
 
+function copyFor(lang: string) {
+  if (lang === "zh") {
+    return {
+      back: "返回",
+      articles: "文章",
+      sources: "来源",
+      empty: "该事件暂无文章。",
+      eventCoverage: "事件覆盖时间",
+      lastArticleUpdate: "最后一篇文章更新时间",
+    };
+  }
+
+  return {
+    back: "Back",
+    articles: "Articles",
+    sources: "Sources",
+    empty: "No articles for this event yet.",
+    eventCoverage: "Event coverage",
+    lastArticleUpdate: "Last article update",
+  };
+}
+
 async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
   const res = await fetch(`${API_BASE}/api/events/${id}`, {
@@ -70,7 +100,28 @@ async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
   return res.json();
 }
 
-function EventHeader({ event }: { event: EventDetailResponse["event"] }) {
+async function fetchEventTitleZh(id: string): Promise<EventTitleZhResponse | null> {
+  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+  try {
+    const res = await fetch(`${API_BASE}/api/events/${id}/title-zh`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+function EventHeader({
+  event,
+  articles,
+  t,
+}: {
+  event: EventDetailResponse["event"];
+  articles: EventDetailResponse["articles"];
+  t: ReturnType<typeof copyFor>;
+}) {
   const hasStart = !!event.start_time;
   const hasEnd = !!event.end_time;
   const eventRange = hasStart && hasEnd
@@ -87,22 +138,34 @@ function EventHeader({ event }: { event: EventDetailResponse["event"] }) {
       <h1 className={styles.title}>{event.title}</h1>
 
       {eventRange ? (
-        <div className={styles.timeLine}>Event coverage: {eventRange}</div>
+        <div className={styles.timeLine}>{t.eventCoverage}: {eventRange}</div>
       ) : null}
 
       {lastSeen ? (
-        <div className={styles.timeLine}>Last article update: {lastSeen}</div>
+        <div className={styles.timeLine}>{t.lastArticleUpdate}: {lastSeen}</div>
       ) : null}
 
       <div className={styles.metaChips}>
-        <span className={styles.chip}>Articles {event.articles_count}</span>
-        <span className={styles.chip}>Sources {event.sources_count}</span>
+        <span className={styles.chip}>
+          {t.articles} {event.articles_count}
+        </span>
+        <span className={styles.chip}>
+          {t.sources} {event.sources_count}
+        </span>
       </div>
     </section>
   );
 }
 
-function GroupedArticleList({ articles }: { articles: EventDetailResponse["articles"] }) {
+function GroupedArticleList({
+  articles,
+  t,
+  lang,
+}: {
+  articles: EventDetailResponse["articles"];
+  t: ReturnType<typeof copyFor>;
+  lang: string;
+}) {
   const groupedBySource = articles.reduce<Record<string, EventDetailResponse["articles"]>>((acc, article) => {
     const sourceName = article.source?.name || "Unknown";
     if (!acc[sourceName]) {
@@ -121,9 +184,7 @@ function GroupedArticleList({ articles }: { articles: EventDetailResponse["artic
 
   return (
     <section className={styles.groupedSection}>
-      {sortedGroups.length === 0 ? (
-        <div className={styles.emptyCard}>No articles for this event yet.</div>
-      ) : null}
+      {sortedGroups.length === 0 ? <div className={styles.emptyCard}>{t.empty}</div> : null}
 
       <div className={styles.groupList}>
         {sortedGroups.map(([sourceName, sourceArticles]) => (
@@ -136,7 +197,7 @@ function GroupedArticleList({ articles }: { articles: EventDetailResponse["artic
             }
           >
             <SourceNewspaperCard
-              sourceName={sourceName}
+              sourceName={lang === "zh" ? toSourceNameZh(sourceName) : sourceName}
               articles={sourceArticles}
               isFeatured={sourceName === featuredSourceName}
             />
@@ -147,27 +208,38 @@ function GroupedArticleList({ articles }: { articles: EventDetailResponse["artic
   );
 }
 
-export default async function EventDetailPage({
+export default async function LocalizedEventDetailPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ lang: string; id: string }>;
 }) {
-  const { id } = await params;
-
+  const { lang, id } = await params;
+  if (!SUPPORTED_LANGS.has(lang)) {
+    notFound();
+  }
   if (!id) {
     throw new Error("Route param id is missing");
   }
 
-  const data = await fetchEventDetail(id);
+  const t = copyFor(lang);
+  const [data, translated] = await Promise.all([
+    fetchEventDetail(id),
+    lang === "zh" ? fetchEventTitleZh(id) : Promise.resolve(null),
+  ]);
+
+  const headerEvent = {
+    ...data.event,
+    title: translated?.title || data.event.title,
+  };
 
   return (
     <main className={styles.page}>
-      <Link href="/" className={styles.backLink}>
-        Back
+      <Link href={`/${lang}`} className={styles.backLink}>
+        {t.back}
       </Link>
 
-      <EventHeader event={data.event} articles={data.articles} />
-      <GroupedArticleList articles={data.articles} />
+      <EventHeader event={headerEvent} articles={data.articles} t={t} />
+      <GroupedArticleList articles={data.articles} t={t} lang={lang} />
     </main>
   );
 }

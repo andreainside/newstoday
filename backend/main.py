@@ -1,5 +1,13 @@
-from fastapi import FastAPI
+from pathlib import Path
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, Response
 from sqlalchemy import func
+
+_BACKEND_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _BACKEND_DIR.parent
+load_dotenv(_REPO_ROOT / ".env")
+load_dotenv(_BACKEND_DIR / ".env")
 
 from app.api.events import router as events_router
 from database import SessionLocal
@@ -18,9 +26,9 @@ def root():
     return {"message": "NewsToday API is running"}
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["HEAD", "GET"])
 def health():
-    return {"status": "ok"}
+    return Response(status_code=200)
 
 
 @app.get("/sources")

@@ -1,21 +1,28 @@
 # app/services/event_reader.py
 from __future__ import annotations
 import math
+import os
+import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional,Tuple
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Result
 
 # 重要：只用 app.database，避免你根目录 database.py / app/database.py 混用
 from app.database import SessionLocal
+from app.observability import log_json
 from app.services.article_types import effective_type
+from app.services.event_title_ai import (
+  current_deepseek_settings,
+  summarize_event_title,
+)
 
 # v0 固定口径参数（稳定、可复现）
 WINDOW_HOURS = 72
-TAU_HOURS = 24
-WEIGHTS = {"hot": 0.45, "div": 0.35, "fresh": 0.20}
+TAU_HOURS = 12
+WEIGHTS = {"hot": 0.25, "div": 0.20, "fresh": 0.55}
 
 SQL_TOP_EVENTS = """
 WITH stats AS (
@@ -24,25 +31,26 @@ WITH stats AS (
     COALESCE(e.representative_title, e.title) AS title,
     e.start_time,
     e.end_time,
-    COALESCE(e.last_updated_at, e.end_time, e.created_at) AS last_seen_at,
+    MAX(a.published_at) AS max_article_time,
+    COALESCE(MAX(a.published_at), e.end_time, e.created_at) AS last_seen_at,
     COUNT(ea.article_id) AS articles_count,
     COUNT(DISTINCT a.source_id) AS sources_count
   FROM events e
   JOIN event_articles ea ON ea.event_id = e.id
   JOIN articles a ON a.id = ea.article_id
-  WHERE COALESCE(e.last_updated_at, e.end_time, e.created_at) >= (:as_of_ts - (:window_hours || ' hours')::interval)
-  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, COALESCE(e.last_updated_at, e.end_time, e.created_at)
+  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, e.created_at
+  HAVING MAX(a.published_at) >= (:as_of_ts - (:window_hours || ' hours')::interval)
 ),
 scored AS (
   SELECT
     s.*,
-    EXTRACT(EPOCH FROM (:as_of_ts - s.last_seen_at))/3600.0 AS age_hours,
-    LN(1 + s.articles_count) AS hot,
+    EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0 AS age_hours,
+    (LN(1 + s.articles_count) / (1 + (EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0) / 24.0)) AS hot,
     LN(1 + s.sources_count) AS div,
-    EXP(-(EXTRACT(EPOCH FROM (:as_of_ts - s.last_seen_at))/3600.0) / :tau_hours) AS fresh,
-    (:w_hot * LN(1 + s.articles_count)
+    EXP(-(EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0) / :tau_hours) AS fresh,
+    (:w_hot * (LN(1 + s.articles_count) / (1 + (EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0) / 24.0))
      + :w_div * LN(1 + s.sources_count)
-     + :w_fresh * EXP(-(EXTRACT(EPOCH FROM (:as_of_ts - s.last_seen_at))/3600.0) / :tau_hours)
+     + :w_fresh * EXP(-(EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0) / :tau_hours)
     ) AS score
   FROM stats s
 )
@@ -59,14 +67,16 @@ WITH base AS (
     COALESCE(e.representative_title, e.title) AS title,
     e.start_time,
     e.end_time,
-    COALESCE(e.last_updated_at, e.end_time, e.created_at) AS last_seen_at,
+    MAX(a.published_at) AS max_article_time,
+    e.last_updated_at AS event_last_updated_at,
+    COALESCE(MAX(a.published_at), e.end_time, e.created_at) AS last_seen_at,
     COUNT(ea.article_id) AS articles_count,
     COUNT(DISTINCT a.source_id) AS sources_count
   FROM events e
   JOIN event_articles ea ON ea.event_id = e.id
   JOIN articles a ON a.id = ea.article_id
   WHERE e.id = :event_id
-  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, COALESCE(e.last_updated_at, e.end_time, e.created_at)
+  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, e.created_at, e.last_updated_at
 )
 SELECT * FROM base;
 """
@@ -93,15 +103,77 @@ WHERE ea.event_id = :event_id
 ORDER BY a.published_at DESC NULLS LAST, a.id DESC;
 """
 
+SQL_EVENT_TITLES_FOR_TOP = """
+SELECT
+  ea.event_id,
+  a.title
+FROM event_articles ea
+JOIN articles a ON a.id = ea.article_id
+WHERE ea.event_id IN :event_ids
+ORDER BY ea.event_id ASC, a.published_at DESC NULLS LAST, a.id DESC;
+"""
+
+SQL_EVENT_AI_CACHE_UPSERT = """
+INSERT INTO event_ai_cache (event_id, provider, model, status, output_json, error, updated_at)
+VALUES (:event_id, :provider, :model, :status, CAST(:output_json AS jsonb), :error, now())
+ON CONFLICT (event_id, provider, model)
+DO UPDATE SET
+  status = EXCLUDED.status,
+  output_json = EXCLUDED.output_json,
+  error = EXCLUDED.error,
+  updated_at = now();
+"""
+
+SQL_EVENT_AI_CACHE_GET = """
+SELECT status, output_json, updated_at
+FROM event_ai_cache
+WHERE event_id = :event_id AND provider = :provider AND model = :model
+ORDER BY updated_at DESC
+LIMIT 1;
+"""
+
+SQL_EVENT_AI_CACHE_CLAIM = """
+INSERT INTO event_ai_cache (event_id, provider, model, status, output_json, error, updated_at)
+VALUES (:event_id, :provider, :model, 'PENDING', NULL, NULL, now())
+ON CONFLICT (event_id, provider, model) DO NOTHING
+RETURNING event_id;
+"""
+
+SQL_ENSURE_EVENT_AI_CACHE = """
+CREATE TABLE IF NOT EXISTS event_ai_cache (
+  id bigserial PRIMARY KEY,
+  event_id bigint NOT NULL,
+  provider text NOT NULL,
+  model text NOT NULL,
+  status text NOT NULL DEFAULT 'PENDING',
+  output_json jsonb,
+  error text,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(event_id, provider, model)
+);
+"""
+
+EVENT_TITLE_PROMPT_VERSION = "event_title_v1"
+EVENT_TITLE_INPUT_HASH = "top_titles_v1"
+EVENT_AI_PENDING_RETRY_SECONDS = int(os.getenv("EVENT_AI_PENDING_RETRY_SECONDS", "90"))
+EVENT_AI_AUTO_CREATE_TABLE = os.getenv("EVENT_AI_AUTO_CREATE_TABLE", "1") == "1"
+
 def _utc_now() -> datetime:
   # 统一用 UTC，避免前后端时区混乱
   return datetime.now(timezone.utc)
+
+
+def _bootstrap_event_ai_cache_table(db) -> None:
+  if EVENT_AI_AUTO_CREATE_TABLE:
+    db.execute(text(SQL_ENSURE_EVENT_AI_CACHE))
 
 def get_top_events(limit: int) -> Dict[str, Any]:
   limit = max(1, min(int(limit), 20))
   as_of = _utc_now()
 
   with SessionLocal() as db:
+    _bootstrap_event_ai_cache_table(db)
+
     rows: Result = db.execute(
       text(SQL_TOP_EVENTS),
       {
@@ -135,6 +207,119 @@ def get_top_events(limit: int) -> Dict[str, Any]:
         }
       )
 
+    try:
+      event_ids = [int(item["event_id"]) for item in items]
+      titles_map: Dict[int, List[str]] = defaultdict(list)
+      if event_ids:
+        title_stmt = text(SQL_EVENT_TITLES_FOR_TOP).bindparams(bindparam("event_ids", expanding=True))
+        title_rows = db.execute(
+          title_stmt,
+          {"event_ids": event_ids},
+        ).mappings()
+        for tr in title_rows:
+          event_id = int(tr["event_id"])
+          title = (tr["title"] or "").strip()
+          if title:
+            titles_map[event_id].append(title)
+
+      for item in items:
+        event_id = int(item["event_id"])
+        article_titles = titles_map.get(event_id, [])
+        if not article_titles:
+          continue
+
+        settings = current_deepseek_settings()
+        model = settings["model"]
+        cached = db.execute(
+          text(SQL_EVENT_AI_CACHE_GET),
+          {
+            "event_id": event_id,
+            "provider": "deepseek",
+            "model": model,
+          },
+        ).mappings().first()
+        if cached and cached.get("status") == "SUCCESS":
+          output_json = cached.get("output_json") or {}
+          cached_title = output_json.get("title") if isinstance(output_json, dict) else None
+          if cached_title:
+            log_json(
+              "deepseek_call",
+              event_id=event_id,
+              provider="deepseek",
+              model=model,
+              status="SUCCESS",
+              error_type=None,
+              http_status=None,
+              latency_ms=0,
+              cache_hit=True,
+            )
+            item["title"] = cached_title
+            continue
+        if cached and cached.get("status") == "PENDING":
+          updated_at = cached.get("updated_at")
+          if isinstance(updated_at, datetime):
+            ts = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
+            if (_utc_now() - ts).total_seconds() < EVENT_AI_PENDING_RETRY_SECONDS:
+              continue
+        # retry stale PENDING and previous ERROR entries
+
+        claim_row = db.execute(
+          text(SQL_EVENT_AI_CACHE_CLAIM),
+          {
+            "event_id": event_id,
+            "provider": "deepseek",
+            "model": model,
+          },
+        ).mappings().first()
+        if not claim_row:
+          continue
+
+        ai_result = summarize_event_title(article_titles, event_id=event_id)
+        if ai_result.get("ok") and ai_result.get("title"):
+          item["title"] = ai_result["title"]
+          db.execute(
+            text(SQL_EVENT_AI_CACHE_UPSERT),
+            {
+              "event_id": event_id,
+              "provider": "deepseek",
+              "model": model,
+              "status": "SUCCESS",
+              "output_json": json.dumps(
+                {
+                  "title": ai_result["title"],
+                  "sampled_titles": ai_result.get("sampled_titles", []),
+                  "total_article_titles": len(article_titles),
+                  "input_hash": EVENT_TITLE_INPUT_HASH,
+                  "prompt_version": EVENT_TITLE_PROMPT_VERSION,
+                }
+              ),
+              "error": None,
+            },
+          )
+        else:
+          if ai_result.get("error") not in ("missing_deepseek_api_key", "empty_article_titles"):
+            db.execute(
+              text(SQL_EVENT_AI_CACHE_UPSERT),
+              {
+                "event_id": event_id,
+                "provider": "deepseek",
+                "model": model,
+                "status": "ERROR",
+                "output_json": None,
+                "error": str(ai_result.get("error") or "unknown_error")[:1000],
+              },
+            )
+
+      if items:
+        db.commit()
+    except Exception as exc:
+      log_json(
+        "deepseek_cache_pipeline_error",
+        error_type=type(exc).__name__,
+        error=str(exc),
+      )
+      db.rollback()
+
   return {
     "as_of": as_of.isoformat(),
     "window_hours": WINDOW_HOURS,
@@ -149,6 +334,30 @@ def get_event_detail(event_id: int, diversity: int = 0, debug: bool = False) -> 
     base_row = db.execute(text(SQL_EVENT_DETAIL), {"event_id": event_id}).mappings().first()
     if not base_row:
       return {"event": None, "coverage": None, "gaps": None, "articles": []}
+
+    event_title = base_row["title"]
+    try:
+      settings = current_deepseek_settings()
+      model = settings["model"]
+      cached = db.execute(
+        text(SQL_EVENT_AI_CACHE_GET),
+        {
+          "event_id": event_id,
+          "provider": "deepseek",
+          "model": model,
+        },
+      ).mappings().first()
+      if cached and cached.get("status") == "SUCCESS":
+        output_json = cached.get("output_json") or {}
+        cached_title = output_json.get("title") if isinstance(output_json, dict) else None
+        if cached_title:
+          event_title = cached_title
+    except Exception as exc:
+      log_json(
+        "deepseek_event_detail_title_fallback",
+        event_id=event_id,
+        error_type=type(exc).__name__,
+      )
 
     article_rows = list(
       db.execute(text(SQL_EVENT_ARTICLES), {"event_id": event_id}).mappings()
@@ -196,10 +405,12 @@ def get_event_detail(event_id: int, diversity: int = 0, debug: bool = False) -> 
   resp = {
     "event": {
       "event_id": base_row["event_id"],
-      "title": base_row["title"],
+      "title": event_title,
       "start_time": base_row["start_time"],
       "end_time": base_row["end_time"],
       "last_seen_at": base_row["last_seen_at"],
+      "max_article_time": base_row["max_article_time"],
+      "event_last_updated_at": base_row["event_last_updated_at"],
       "articles_count": base_row["articles_count"],
       "sources_count": base_row["sources_count"],
     },
