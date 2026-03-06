@@ -57,6 +57,10 @@ async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
     cache: "no-store",
   });
 
+  if (res.status === 404) {
+    notFound();
+  }
+
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Failed to fetch event detail: ${res.status} ${text}`);

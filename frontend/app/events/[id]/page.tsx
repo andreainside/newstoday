@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import SourceNewspaperCard, { type SourceArticle } from "./components/SourceNewspaperCard";
 import styles from "./eventDetail.module.css";
 
@@ -25,6 +26,10 @@ async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
   const res = await fetch(`${API_BASE}/api/events/${id}`, {
     cache: "no-store",
   });
+
+  if (res.status === 404) {
+    notFound();
+  }
 
   if (!res.ok) {
     const text = await res.text();
