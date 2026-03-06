@@ -65,16 +65,18 @@ WITH base AS (
   SELECT
     e.id AS event_id,
     COALESCE(e.representative_title, e.title) AS title,
-    e.start_time,
-    e.end_time,
-    COALESCE(e.last_updated_at, e.end_time, e.created_at) AS last_seen_at,
+    COALESCE(MIN(a.published_at), e.start_time, e.created_at) AS start_time,
+    COALESCE(MAX(a.published_at), e.end_time, e.created_at) AS end_time,
+    MAX(a.published_at) AS max_article_time,
+    NULL::timestamptz AS event_last_updated_at,
+    COALESCE(MAX(a.published_at), e.end_time, e.created_at) AS last_seen_at,
     COUNT(ea.article_id) AS articles_count,
     COUNT(DISTINCT a.source_id) AS sources_count
   FROM events e
   JOIN event_articles ea ON ea.event_id = e.id
   JOIN articles a ON a.id = ea.article_id
   WHERE e.id = :event_id
-  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, COALESCE(e.last_updated_at, e.end_time, e.created_at)
+  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, e.created_at
 )
 SELECT * FROM base;
 """
@@ -407,6 +409,8 @@ def get_event_detail(event_id: int, diversity: int = 0, debug: bool = False) -> 
       "start_time": base_row["start_time"],
       "end_time": base_row["end_time"],
       "last_seen_at": base_row["last_seen_at"],
+      "max_article_time": base_row["max_article_time"],
+      "event_last_updated_at": base_row["event_last_updated_at"],
       "articles_count": base_row["articles_count"],
       "sources_count": base_row["sources_count"],
     },

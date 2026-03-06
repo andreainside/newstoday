@@ -1,6 +1,7 @@
 import json
 import feedparser
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from database import SessionLocal
 from models import Source, Article
 from sqlalchemy.dialects.postgresql import insert
@@ -10,10 +11,28 @@ SKIP_SOURCE_URLS = {"https://rss.cbc.ca/lineup/world.xml"}
 
 
 def parse_published(entry) -> datetime | None:
-    # feedparser may expose published_parsed (time.struct_time)
+    # feedparser may expose published_parsed/updated_parsed (time.struct_time)
+    # We normalize to naive UTC for DB columns defined as timestamp without time zone.
+    def _to_naive_utc(dt: datetime) -> datetime:
+        if dt.tzinfo is None:
+            return dt
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
     if getattr(entry, "published_parsed", None):
         t = entry.published_parsed
         return datetime(t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec)
+
+    if getattr(entry, "updated_parsed", None):
+        t = entry.updated_parsed
+        return datetime(t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec)
+
+    published_raw = getattr(entry, "published", None) or getattr(entry, "updated", None)
+    if isinstance(published_raw, str) and published_raw.strip():
+        try:
+            return _to_naive_utc(parsedate_to_datetime(published_raw.strip()))
+        except Exception:
+            return None
+
     return None
 
 
