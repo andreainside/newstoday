@@ -122,16 +122,11 @@ function EventHeader({
   articles: EventDetailResponse["articles"];
   t: ReturnType<typeof copyFor>;
 }) {
-  const hasStart = !!event.start_time;
-  const hasEnd = !!event.end_time;
-  const eventRange = hasStart && hasEnd
-    ? `${fmtTime(event.start_time)} ~ ${fmtTime(event.end_time)}`
-    : hasStart
-      ? fmtTime(event.start_time)
-      : hasEnd
-        ? fmtTime(event.end_time)
-        : "";
-  const lastSeen = fmtTime(event.last_seen_at);
+  const coverage = resolveCoverageRange(event, articles);
+  const eventRange = coverage.start && coverage.end
+    ? `${coverage.start} ~ ${coverage.end}`
+    : coverage.start || coverage.end;
+  const lastSeen = fmtTimeToMinute(event.last_seen_at);
 
   return (
     <section className={styles.header}>
