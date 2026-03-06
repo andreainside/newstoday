@@ -68,7 +68,7 @@ function copyFor(lang: string) {
       articles: "文章",
       sources: "来源",
       empty: "该事件暂无文章。",
-      eventCoverage: "文章时间范围",
+      eventCoverage: "事件覆盖时间",
       lastArticleUpdate: "最后一篇文章更新时间",
     };
   }
@@ -78,7 +78,7 @@ function copyFor(lang: string) {
     articles: "Articles",
     sources: "Sources",
     empty: "No articles for this event yet.",
-    eventCoverage: "Article time range",
+    eventCoverage: "Event coverage",
     lastArticleUpdate: "Last article update",
   };
 }
@@ -122,9 +122,16 @@ function EventHeader({
   articles: EventDetailResponse["articles"];
   t: ReturnType<typeof copyFor>;
 }) {
-  const { start, end } = resolveCoverageRange(event, articles);
-  const eventRange = start && end ? `${start} ~ ${end}` : start || end;
-  const lastSeen = fmtTimeToMinute(event.last_seen_at);
+  const hasStart = !!event.start_time;
+  const hasEnd = !!event.end_time;
+  const eventRange = hasStart && hasEnd
+    ? `${fmtTime(event.start_time)} ~ ${fmtTime(event.end_time)}`
+    : hasStart
+      ? fmtTime(event.start_time)
+      : hasEnd
+        ? fmtTime(event.end_time)
+        : "";
+  const lastSeen = fmtTime(event.last_seen_at);
 
   return (
     <section className={styles.header}>
