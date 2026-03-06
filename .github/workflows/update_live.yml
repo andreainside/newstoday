@@ -49,6 +49,9 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           PYTHONWARNINGS: "ignore::DeprecationWarning"
+          BACKFILL_EMBED_LIMIT: "2000"
+          CLUSTER_MAX_ROUNDS: "8"
+          CLUSTER_MAX_ARTICLES: "1200"
         run: |
           set -euo pipefail
           python -m scripts.update_live --write
