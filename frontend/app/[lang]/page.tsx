@@ -39,14 +39,21 @@ type EventTitleZhResponse = {
 
 async function fetchEventTitleZh(eventId: number): Promise<string | null> {
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+  const timeoutMs = 1500;
+
   try {
     const res = await fetch(`${API_BASE}/api/events/${eventId}/title-zh`, {
-      cache: "no-store",
+      next: { revalidate: 300 },
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as EventTitleZhResponse;
     return data.title || null;
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      console.warn(`Fetching zh title for event ${eventId} timed out after ${timeoutMs}ms`);
+      return null;
+    }
     return null;
   }
 }

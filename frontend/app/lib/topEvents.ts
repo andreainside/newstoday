@@ -35,9 +35,13 @@ function emptyTopEventsResponse(): TopEventsResponse {
 
 export async function fetchTopEvents(limit = 5): Promise<TopEventsResponse> {
   const API_BASE = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+  const timeoutMs = 5000;
 
   try {
-    const res = await fetch(`${API_BASE}/api/events/top?limit=${limit}`, { cache: "no-store" });
+    const res = await fetch(`${API_BASE}/api/events/top?limit=${limit}`, {
+      next: { revalidate: 30 },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
 
     if (!res.ok) {
       const text = await res.text();
@@ -47,6 +51,10 @@ export async function fetchTopEvents(limit = 5): Promise<TopEventsResponse> {
 
     return res.json();
   } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      console.error(`Fetching top events timed out after ${timeoutMs}ms`);
+      return emptyTopEventsResponse();
+    }
     console.error("Failed to fetch top events:", error);
     return emptyTopEventsResponse();
   }
