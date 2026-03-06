@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, UTC
 from typing import List, Optional, Tuple, Set
@@ -31,7 +32,7 @@ VEC_MERGE_SIM = 0.62
 
 # ==============================================
 
-MAX_ARTICLES = 100            # 安全阀：最多处理多少篇
+MAX_ARTICLES = int(os.getenv("CLUSTER_MAX_ARTICLES", "300"))            # 安全阀：最多处理多少篇
 DO_WRITE_DEFAULT = False     # 默认不写库
 
 

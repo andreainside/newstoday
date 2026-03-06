@@ -65,10 +65,10 @@ WITH base AS (
   SELECT
     e.id AS event_id,
     COALESCE(e.representative_title, e.title) AS title,
-    e.start_time,
-    e.end_time,
+    COALESCE(MIN(a.published_at), e.start_time, e.created_at) AS start_time,
+    COALESCE(MAX(a.published_at), e.end_time, e.created_at) AS end_time,
     MAX(a.published_at) AS max_article_time,
-    e.last_updated_at AS event_last_updated_at,
+    NULL::timestamptz AS event_last_updated_at,
     COALESCE(MAX(a.published_at), e.end_time, e.created_at) AS last_seen_at,
     COUNT(ea.article_id) AS articles_count,
     COUNT(DISTINCT a.source_id) AS sources_count
@@ -76,7 +76,7 @@ WITH base AS (
   JOIN event_articles ea ON ea.event_id = e.id
   JOIN articles a ON a.id = ea.article_id
   WHERE e.id = :event_id
-  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, e.created_at, e.last_updated_at
+  GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, e.created_at
 )
 SELECT * FROM base;
 """

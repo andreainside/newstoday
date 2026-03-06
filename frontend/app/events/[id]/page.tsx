@@ -112,7 +112,15 @@ function GroupedArticleList({ articles }: { articles: EventDetailResponse["artic
     return acc;
   }, {});
 
+  const latestArticleTs = (items: EventDetailResponse["articles"]) => {
+    const firstWithTs = items.find((it) => !!it.published_at);
+    return firstWithTs?.published_at ? Date.parse(firstWithTs.published_at) : Number.NEGATIVE_INFINITY;
+  };
+
   const sortedGroups = Object.entries(groupedBySource).sort((a, b) => {
+    const latestDiff = latestArticleTs(b[1]) - latestArticleTs(a[1]);
+    if (latestDiff !== 0) return latestDiff;
+
     const countDiff = b[1].length - a[1].length;
     if (countDiff !== 0) return countDiff;
     return a[0].localeCompare(b[0]);
