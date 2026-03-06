@@ -24,9 +24,41 @@ type EventTitleZhResponse = {
   status: string;
 };
 
-function fmtTime(s: string | null | undefined) {
-  if (!s) return "";
-  return s.replace("T", " ").replace("Z", "");
+function parseTime(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function fmtTimeToMinute(s: string | null | undefined) {
+  const d = parseTime(s);
+  if (!d) return "";
+  return d.toISOString().slice(0, 16).replace("T", " ");
+}
+
+function resolveCoverageRange(
+  event: EventDetailResponse["event"],
+  articles: EventDetailResponse["articles"],
+) {
+  const articleTimes = articles
+    .map((a) => parseTime(a.published_at))
+    .filter((t): t is Date => t !== null)
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  const start = articleTimes[0] || parseTime(event.start_time);
+  const endCandidates = [
+    articleTimes.length > 0 ? articleTimes[articleTimes.length - 1] : null,
+    parseTime(event.end_time),
+    parseTime(event.last_seen_at),
+  ].filter((t): t is Date => t !== null);
+  const end = endCandidates.length > 0
+    ? endCandidates.reduce((latest, cur) => (cur.getTime() > latest.getTime() ? cur : latest))
+    : null;
+
+  return {
+    start: start ? fmtTimeToMinute(start.toISOString()) : "",
+    end: end ? fmtTimeToMinute(end.toISOString()) : "",
+  };
 }
 
 function copyFor(lang: string) {
@@ -36,7 +68,7 @@ function copyFor(lang: string) {
       articles: "文章",
       sources: "来源",
       empty: "该事件暂无文章。",
-      eventCoverage: "事件覆盖时间",
+      eventCoverage: "文章时间范围",
       lastArticleUpdate: "最后一篇文章更新时间",
     };
   }
@@ -46,7 +78,7 @@ function copyFor(lang: string) {
     articles: "Articles",
     sources: "Sources",
     empty: "No articles for this event yet.",
-    eventCoverage: "Event coverage",
+    eventCoverage: "Article time range",
     lastArticleUpdate: "Last article update",
   };
 }
@@ -56,6 +88,10 @@ async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
   const res = await fetch(`${API_BASE}/api/events/${id}`, {
     cache: "no-store",
   });
+
+  if (res.status === 404) {
+    notFound();
+  }
 
   if (!res.ok) {
     const text = await res.text();
@@ -79,21 +115,16 @@ async function fetchEventTitleZh(id: string): Promise<EventTitleZhResponse | nul
 
 function EventHeader({
   event,
+  articles,
   t,
 }: {
   event: EventDetailResponse["event"];
+  articles: EventDetailResponse["articles"];
   t: ReturnType<typeof copyFor>;
 }) {
-  const hasStart = !!event.start_time;
-  const hasEnd = !!event.end_time;
-  const eventRange = hasStart && hasEnd
-    ? `${fmtTime(event.start_time)} ~ ${fmtTime(event.end_time)}`
-    : hasStart
-      ? fmtTime(event.start_time)
-      : hasEnd
-        ? fmtTime(event.end_time)
-        : "";
-  const lastSeen = fmtTime(event.last_seen_at);
+  const { start, end } = resolveCoverageRange(event, articles);
+  const eventRange = start && end ? `${start} ~ ${end}` : start || end;
+  const lastSeen = fmtTimeToMinute(event.last_seen_at);
 
   return (
     <section className={styles.header}>
@@ -200,7 +231,7 @@ export default async function LocalizedEventDetailPage({
         {t.back}
       </Link>
 
-      <EventHeader event={headerEvent} t={t} />
+      <EventHeader event={headerEvent} articles={data.articles} t={t} />
       <GroupedArticleList articles={data.articles} t={t} lang={lang} />
     </main>
   );
