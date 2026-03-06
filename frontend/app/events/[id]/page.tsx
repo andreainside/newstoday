@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import SourceNewspaperCard, { type SourceArticle } from "./components/SourceNewspaperCard";
 import styles from "./eventDetail.module.css";
 
@@ -15,9 +16,41 @@ type EventDetailResponse = {
   articles: Array<SourceArticle>;
 };
 
-function fmtTime(s: string | null | undefined) {
-  if (!s) return "";
-  return s.replace("T", " ").replace("Z", "");
+function parseTime(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function fmtTimeToMinute(s: string | null | undefined) {
+  const d = parseTime(s);
+  if (!d) return "";
+  return d.toISOString().slice(0, 16).replace("T", " ");
+}
+
+function resolveCoverageRange(
+  event: EventDetailResponse["event"],
+  articles: EventDetailResponse["articles"],
+) {
+  const articleTimes = articles
+    .map((a) => parseTime(a.published_at))
+    .filter((t): t is Date => t !== null)
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  const start = articleTimes[0] || parseTime(event.start_time);
+  const endCandidates = [
+    articleTimes.length > 0 ? articleTimes[articleTimes.length - 1] : null,
+    parseTime(event.end_time),
+    parseTime(event.last_seen_at),
+  ].filter((t): t is Date => t !== null);
+  const end = endCandidates.length > 0
+    ? endCandidates.reduce((latest, cur) => (cur.getTime() > latest.getTime() ? cur : latest))
+    : null;
+
+  return {
+    start: start ? fmtTimeToMinute(start.toISOString()) : "",
+    end: end ? fmtTimeToMinute(end.toISOString()) : "",
+  };
 }
 
 async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
@@ -25,6 +58,10 @@ async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
   const res = await fetch(`${API_BASE}/api/events/${id}`, {
     cache: "no-store",
   });
+
+  if (res.status === 404) {
+    notFound();
+  }
 
   if (!res.ok) {
     const text = await res.text();
@@ -129,7 +166,7 @@ export default async function EventDetailPage({
         Back
       </Link>
 
-      <EventHeader event={data.event} />
+      <EventHeader event={data.event} articles={data.articles} />
       <GroupedArticleList articles={data.articles} />
     </main>
   );
