@@ -50,7 +50,7 @@ def main() -> None:
                 FROM articles
                 WHERE embedding IS NULL
                 AND published_at >= (NOW() - (:since_days * INTERVAL '1 day'))
-                ORDER BY published_at ASC
+                ORDER BY published_at DESC
                 LIMIT :limit
                 """
             ),

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 
 import sys
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, UTC
 from typing import List, Optional, Tuple, Set
@@ -42,7 +43,7 @@ VEC_MERGE_SIM = 0.62
 
 # ==============================================
 
-MAX_ARTICLES = 100            # 瀹夊叏闃€锛氭渶澶氬鐞嗗灏戠瘒
+MAX_ARTICLES = int(os.getenv("CLUSTER_MAX_ARTICLES", "300"))            # 瀹夊叏闃€锛氭渶澶氬鐞嗗灏戠瘒
 DO_WRITE_DEFAULT = False     # 榛樿涓嶅啓搴?
 
 
@@ -85,7 +86,7 @@ def get_recent_articles(db: Session, since: datetime, limit: int) -> List[dict]:
         WHERE a.published_at >= :since
           AND ea.article_id IS NULL            -- 鍙鐞嗘湭閾炬帴鏂囩珷锛堥伩鍏嶉噸澶嶆壂锛?
           AND a.embedding IS NOT NULL          -- 鍚戦噺鍙洖蹇呴』鏈?embedding
-        ORDER BY a.published_at ASC, a.id ASC          -- 鍙栨渶鏂扮殑
+        ORDER BY a.published_at DESC, a.id DESC          -- 鍙栨渶鏂扮殑
         LIMIT :limit;
     """)
     rows = db.execute(q, {"since": since, "limit": limit}).mappings().all()
@@ -463,4 +464,3 @@ if __name__ == "__main__":
     parser.add_argument("--write", action="store_true", help="actually write events/event_articles to DB")
     args = parser.parse_args()
     main(do_write=args.write)
-

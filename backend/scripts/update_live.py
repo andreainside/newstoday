@@ -29,6 +29,21 @@ def _print_kv(**kwargs) -> None:
     print(" ".join(parts))
 
 
+def _env_int(name: str, default: int, *, min_value: int = 1, max_value: int = 20000) -> int:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        v = int(str(raw).strip())
+    except Exception:
+        return default
+    if v < min_value:
+        return min_value
+    if v > max_value:
+        return max_value
+    return v
+
+
 def _parse_fetch_rss(text: str) -> dict:
     m = re.search(r"Total inserted\s*=\s*(\d+)", text)
     if m:
@@ -138,6 +153,9 @@ def _build_steps(*, backend_dir: Path, do_write: bool) -> list[Step]:
     else:
         raise FileNotFoundError("cluster_events_live.py not found (and no fallback)")
 
+    embed_limit = _env_int("BACKFILL_EMBED_LIMIT", 2000, min_value=100, max_value=20000)
+    cluster_rounds = _env_int("CLUSTER_MAX_ROUNDS", 6, min_value=1, max_value=30)
+
     steps: list[Step] = [
         Step(
             name="seed_sources",
@@ -162,24 +180,31 @@ def _build_steps(*, backend_dir: Path, do_write: bool) -> list[Step]:
                 "--since_days",
                 "7",
                 "--limit",
-                "300",
+                str(embed_limit),
             ],
             supports_dry_run=False,
             incremental_safe=True,
             parse_counts=_parse_backfill_embeddings,
         ),
-        Step(
-            name="cluster_events_live",
-            cmd=[
-                sys.executable,
-                "-m",
-                cluster_module,
-            ]
-            + (["--write"] if do_write else []),
-            supports_dry_run=True,
-            incremental_safe=True,
-            parse_counts=_parse_cluster_events,
-        ),
+    ]
+
+    for idx in range(cluster_rounds):
+        steps.append(
+            Step(
+                name=f"cluster_events_live_round_{idx + 1}",
+                cmd=[
+                    sys.executable,
+                    "-m",
+                    cluster_module,
+                ]
+                + (["--write"] if do_write else []),
+                supports_dry_run=True,
+                incremental_safe=True,
+                parse_counts=_parse_cluster_events,
+            )
+        )
+
+    steps += [
         Step(
             name="backfill_article_types",
             cmd=[
