@@ -3,8 +3,10 @@ import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { getRequestOriginFromHeaders, makeApiUrl } from "../../../lib/apiBase";
 import { toSourceNameZh } from "../../../lib/sourceNameZh";
-import SourceNewspaperCard, { type SourceArticle } from "./components/SourceNewspaperCard";
-import styles from "./eventDetail.module.css";
+import SourceNewspaperCard, {
+  type SourceArticle,
+} from "../../../events/[id]/components/SourceNewspaperCard";
+import styles from "../../../events/[id]/eventDetail.module.css";
 
 const SUPPORTED_LANGS = new Set(["en", "zh"]);
 
@@ -25,6 +27,34 @@ type EventTitleZhResponse = {
   title: string | null;
   status: string;
 };
+
+function copyFor(lang: string) {
+  if (lang === "zh") {
+    return {
+      back: "返回",
+      eventCoverage: "事件覆盖时间",
+      lastArticleUpdate: "最后文章更新时间",
+      articles: "篇文章",
+      sources: "个来源",
+      noArticles: "该事件暂时没有文章。",
+      articleCountLabel: "篇",
+      showMore: "展开更多",
+      showLess: "收起",
+    };
+  }
+
+  return {
+    back: "Back",
+    eventCoverage: "Event coverage",
+    lastArticleUpdate: "Last article update",
+    articles: "Articles",
+    sources: "Sources",
+    noArticles: "No articles for this event yet.",
+    articleCountLabel: "articles",
+    showMore: "Show more",
+    showLess: "Show less",
+  };
+}
 
 function parseTime(s: string | null | undefined): Date | null {
   if (!s) return null;
@@ -63,26 +93,18 @@ function resolveCoverageRange(
   };
 }
 
-function copyFor(lang: string) {
-  if (lang === "zh") {
-    return {
-      back: "返回",
-      articles: "文章",
-      sources: "来源",
-      empty: "该事件暂无文章。",
-      eventCoverage: "事件覆盖时间",
-      lastArticleUpdate: "最后一篇文章更新时间",
-    };
+async function fetchEventTitleZh(eventId: number, origin?: string): Promise<string | null> {
+  try {
+    const res = await fetch(makeApiUrl(`/api/events/${eventId}/title-zh`, origin), {
+      next: { revalidate: 300 },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as EventTitleZhResponse;
+    return data.title || null;
+  } catch {
+    return null;
   }
-
-  return {
-    back: "Back",
-    articles: "Articles",
-    sources: "Sources",
-    empty: "No articles for this event yet.",
-    eventCoverage: "Event coverage",
-    lastArticleUpdate: "Last article update",
-  };
 }
 
 async function fetchEventDetail(id: string, origin?: string): Promise<EventDetailResponse> {
@@ -101,27 +123,16 @@ async function fetchEventDetail(id: string, origin?: string): Promise<EventDetai
   return res.json();
 }
 
-async function fetchEventTitleZh(id: string, origin?: string): Promise<EventTitleZhResponse | null> {
-  try {
-    const res = await fetch(makeApiUrl(`/api/events/${id}/title-zh`, origin), {
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
-}
-
 function EventHeader({
   event,
   articles,
-  t,
+  lang,
 }: {
   event: EventDetailResponse["event"];
   articles: EventDetailResponse["articles"];
-  t: ReturnType<typeof copyFor>;
+  lang: string;
 }) {
+  const t = copyFor(lang);
   const coverage = resolveCoverageRange(event, articles);
   const eventRange = coverage.start && coverage.end
     ? `${coverage.start} ~ ${coverage.end}`
@@ -141,12 +152,8 @@ function EventHeader({
       ) : null}
 
       <div className={styles.metaChips}>
-        <span className={styles.chip}>
-          {t.articles} {event.articles_count}
-        </span>
-        <span className={styles.chip}>
-          {t.sources} {event.sources_count}
-        </span>
+        <span className={styles.chip}>{t.articles} {event.articles_count}</span>
+        <span className={styles.chip}>{t.sources} {event.sources_count}</span>
       </div>
     </section>
   );
@@ -154,13 +161,13 @@ function EventHeader({
 
 function GroupedArticleList({
   articles,
-  t,
   lang,
 }: {
   articles: EventDetailResponse["articles"];
-  t: ReturnType<typeof copyFor>;
   lang: string;
 }) {
+  const t = copyFor(lang);
+
   const groupedBySource = articles.reduce<Record<string, EventDetailResponse["articles"]>>((acc, article) => {
     const sourceName = article.source?.name || "Unknown";
     if (!acc[sourceName]) {
@@ -187,7 +194,9 @@ function GroupedArticleList({
 
   return (
     <section className={styles.groupedSection}>
-      {sortedGroups.length === 0 ? <div className={styles.emptyCard}>{t.empty}</div> : null}
+      {sortedGroups.length === 0 ? (
+        <div className={styles.emptyCard}>{t.noArticles}</div>
+      ) : null}
 
       <div className={styles.groupList}>
         {sortedGroups.map(([sourceName, sourceArticles]) => (
@@ -203,6 +212,9 @@ function GroupedArticleList({
               sourceName={lang === "zh" ? toSourceNameZh(sourceName) : sourceName}
               articles={sourceArticles}
               isFeatured={sourceName === featuredSourceName}
+              articleCountLabel={t.articleCountLabel}
+              showMoreLabel={t.showMore}
+              showLessLabel={t.showLess}
             />
           </div>
         ))}
@@ -217,25 +229,26 @@ export default async function LocalizedEventDetailPage({
   params: Promise<{ lang: string; id: string }>;
 }) {
   const { lang, id } = await params;
-  const requestHeaders = await headers();
-  const requestOrigin = getRequestOriginFromHeaders(requestHeaders);
+
   if (!SUPPORTED_LANGS.has(lang)) {
     notFound();
   }
+
   if (!id) {
     throw new Error("Route param id is missing");
   }
 
   const t = copyFor(lang);
-  const [data, translated] = await Promise.all([
-    fetchEventDetail(id, requestOrigin),
-    lang === "zh" ? fetchEventTitleZh(id, requestOrigin) : Promise.resolve(null),
-  ]);
+  const requestHeaders = await headers();
+  const requestOrigin = getRequestOriginFromHeaders(requestHeaders);
+  const data = await fetchEventDetail(id, requestOrigin);
 
-  const headerEvent = {
-    ...data.event,
-    title: translated?.title || data.event.title,
-  };
+  if (lang === "zh") {
+    const zhTitle = await fetchEventTitleZh(data.event.event_id, requestOrigin);
+    if (zhTitle) {
+      data.event.title = zhTitle;
+    }
+  }
 
   return (
     <main className={styles.page}>
@@ -243,8 +256,8 @@ export default async function LocalizedEventDetailPage({
         {t.back}
       </Link>
 
-      <EventHeader event={headerEvent} articles={data.articles} t={t} />
-      <GroupedArticleList articles={data.articles} t={t} lang={lang} />
+      <EventHeader event={data.event} articles={data.articles} lang={lang} />
+      <GroupedArticleList articles={data.articles} lang={lang} />
     </main>
   );
 }
