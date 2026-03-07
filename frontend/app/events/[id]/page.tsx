@@ -71,17 +71,18 @@ async function fetchEventDetail(id: string, origin?: string): Promise<EventDetai
   return res.json();
 }
 
-function EventHeader({ event }: { event: EventDetailResponse["event"] }) {
-  const hasStart = !!event.start_time;
-  const hasEnd = !!event.end_time;
-  const eventRange = hasStart && hasEnd
-    ? `${fmtTime(event.start_time)} ~ ${fmtTime(event.end_time)}`
-    : hasStart
-      ? fmtTime(event.start_time)
-      : hasEnd
-        ? fmtTime(event.end_time)
-        : "";
-  const lastSeen = fmtTime(event.last_seen_at);
+function EventHeader({
+  event,
+  articles,
+}: {
+  event: EventDetailResponse["event"];
+  articles: EventDetailResponse["articles"];
+}) {
+  const coverage = resolveCoverageRange(event, articles);
+  const eventRange = coverage.start && coverage.end
+    ? `${coverage.start} ~ ${coverage.end}`
+    : coverage.start || coverage.end;
+  const lastSeen = fmtTimeToMinute(event.last_seen_at);
 
   return (
     <section className={styles.header}>
