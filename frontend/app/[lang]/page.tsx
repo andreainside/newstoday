@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import styles from "../page.module.css";
 import { assignEventBackgrounds } from "../lib/eventBg";
 import { fetchTopEvents } from "../lib/topEvents";
+import { makeApiUrl } from "../lib/apiBase";
 
 const SUPPORTED_LANGS = new Set(["en", "zh"]);
 
@@ -38,11 +39,10 @@ type EventTitleZhResponse = {
 };
 
 async function fetchEventTitleZh(eventId: number): Promise<string | null> {
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
   const timeoutMs = 1500;
 
   try {
-    const res = await fetch(`${API_BASE}/api/events/${eventId}/title-zh`, {
+    const res = await fetch(makeApiUrl(`/api/events/${eventId}/title-zh`), {
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(timeoutMs),
     });

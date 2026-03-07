@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { makeApiUrl } from "../../lib/apiBase";
 import SourceNewspaperCard, { type SourceArticle } from "./components/SourceNewspaperCard";
 import styles from "./eventDetail.module.css";
 
@@ -54,8 +55,7 @@ function resolveCoverageRange(
 }
 
 async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
-  const res = await fetch(`${API_BASE}/api/events/${id}`, {
+  const res = await fetch(makeApiUrl(`/api/events/${id}`), {
     cache: "no-store",
   });
 
