@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { headers } from "next/headers";
-import { notFound } from "next/navigation";
 import { getRequestOriginFromHeaders, makeApiUrl } from "../../lib/apiBase";
 import SourceNewspaperCard, { type SourceArticle } from "./components/SourceNewspaperCard";
 import styles from "./eventDetail.module.css";
@@ -60,13 +59,19 @@ async function fetchEventDetail(id: string, origin?: string): Promise<EventDetai
     cache: "no-store",
   });
 
-  if (res.status === 404) {
-    notFound();
-  }
-
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Failed to fetch event detail: ${res.status} ${text}`);
+    return {
+      event: {
+        event_id: Number(id),
+        title: "Event temporarily unavailable",
+        start_time: null,
+        end_time: null,
+        last_seen_at: new Date().toISOString(),
+        articles_count: 0,
+        sources_count: 0,
+      },
+      articles: [],
+    };
   }
   return res.json();
 }

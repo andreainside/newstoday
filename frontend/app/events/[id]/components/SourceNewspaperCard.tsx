@@ -25,12 +25,18 @@ type Props = {
   sourceName: string;
   articles: SourceArticle[];
   isFeatured?: boolean;
+  articleCountLabel?: string;
+  showMoreLabel?: string;
+  showLessLabel?: string;
 };
 
 export default function SourceNewspaperCard({
   sourceName,
   articles,
   isFeatured = false,
+  articleCountLabel = "articles",
+  showMoreLabel = "Show more",
+  showLessLabel = "Show less",
 }: Props) {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -52,7 +58,7 @@ export default function SourceNewspaperCard({
     >
       <div className={styles.sourceHeader}>
         <h2 className={styles.sourceName}>{sourceName}</h2>
-        <span className={styles.articleCountBadge}>{articles.length} articles</span>
+        <span className={styles.articleCountBadge}>{articles.length} {articleCountLabel}</span>
       </div>
 
       <div
@@ -76,7 +82,7 @@ export default function SourceNewspaperCard({
           className={styles.mobileToggle}
           onClick={() => setIsExpanded((prev) => !prev)}
         >
-          {isExpanded ? "Show less" : "Show more"}
+          {isExpanded ? showLessLabel : showMoreLabel}
         </button>
       ) : null}
     </article>
