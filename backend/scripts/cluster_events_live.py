@@ -86,7 +86,7 @@ def get_recent_articles(db: Session, since: datetime, limit: int) -> List[dict]:
         WHERE a.published_at >= :since
           AND ea.article_id IS NULL            -- 鍙鐞嗘湭閾炬帴鏂囩珷锛堥伩鍏嶉噸澶嶆壂锛?
           AND a.embedding IS NOT NULL          -- 鍚戦噺鍙洖蹇呴』鏈?embedding
-        ORDER BY a.published_at DESC, a.id DESC          -- 鍙栨渶鏂扮殑
+        ORDER BY a.published_at ASC, a.id ASC            -- backlog-safe: oldest unlinked first
         LIMIT :limit;
     """)
     rows = db.execute(q, {"since": since, "limit": limit}).mappings().all()
