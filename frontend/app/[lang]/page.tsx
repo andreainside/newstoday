@@ -123,7 +123,7 @@ export default async function LocalizedHomePage({
             {localizedItems.map((ev) => (
               <Link
                 key={ev.event_id}
-                href={`/${lang}/events/${ev.event_id}`}
+                href={`/events/${ev.event_id}`}
                 className={styles.card}
                 style={{
                   backgroundImage: `url(${bgMap[ev.event_id]})`,
