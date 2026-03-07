@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { getRequestOriginFromHeaders, makeApiUrl } from "../../lib/apiBase";
 import SourceNewspaperCard, { type SourceArticle } from "./components/SourceNewspaperCard";
 import styles from "./eventDetail.module.css";
 
@@ -53,9 +55,8 @@ function resolveCoverageRange(
   };
 }
 
-async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
-  const res = await fetch(`${API_BASE}/api/events/${id}`, {
+async function fetchEventDetail(id: string, origin?: string): Promise<EventDetailResponse> {
+  const res = await fetch(makeApiUrl(`/api/events/${id}`, origin), {
     cache: "no-store",
   });
 
@@ -161,12 +162,14 @@ export default async function EventDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const requestHeaders = await headers();
+  const requestOrigin = getRequestOriginFromHeaders(requestHeaders);
 
   if (!id) {
     throw new Error("Route param id is missing");
   }
 
-  const data = await fetchEventDetail(id);
+  const data = await fetchEventDetail(id, requestOrigin);
 
   return (
     <main className={styles.page}>

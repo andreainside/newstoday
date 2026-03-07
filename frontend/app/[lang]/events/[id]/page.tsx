@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { getRequestOriginFromHeaders, makeApiUrl } from "../../../lib/apiBase";
 import { toSourceNameZh } from "../../../lib/sourceNameZh";
 import SourceNewspaperCard, { type SourceArticle } from "./components/SourceNewspaperCard";
 import styles from "./eventDetail.module.css";
@@ -83,9 +85,8 @@ function copyFor(lang: string) {
   };
 }
 
-async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
-  const res = await fetch(`${API_BASE}/api/events/${id}`, {
+async function fetchEventDetail(id: string, origin?: string): Promise<EventDetailResponse> {
+  const res = await fetch(makeApiUrl(`/api/events/${id}`, origin), {
     cache: "no-store",
   });
 
@@ -100,10 +101,9 @@ async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
   return res.json();
 }
 
-async function fetchEventTitleZh(id: string): Promise<EventTitleZhResponse | null> {
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+async function fetchEventTitleZh(id: string, origin?: string): Promise<EventTitleZhResponse | null> {
   try {
-    const res = await fetch(`${API_BASE}/api/events/${id}/title-zh`, {
+    const res = await fetch(makeApiUrl(`/api/events/${id}/title-zh`, origin), {
       cache: "no-store",
     });
     if (!res.ok) return null;
@@ -222,6 +222,8 @@ export default async function LocalizedEventDetailPage({
   params: Promise<{ lang: string; id: string }>;
 }) {
   const { lang, id } = await params;
+  const requestHeaders = await headers();
+  const requestOrigin = getRequestOriginFromHeaders(requestHeaders);
   if (!SUPPORTED_LANGS.has(lang)) {
     notFound();
   }
@@ -231,8 +233,8 @@ export default async function LocalizedEventDetailPage({
 
   const t = copyFor(lang);
   const [data, translated] = await Promise.all([
-    fetchEventDetail(id),
-    lang === "zh" ? fetchEventTitleZh(id) : Promise.resolve(null),
+    fetchEventDetail(id, requestOrigin),
+    lang === "zh" ? fetchEventTitleZh(id, requestOrigin) : Promise.resolve(null),
   ]);
 
   const headerEvent = {

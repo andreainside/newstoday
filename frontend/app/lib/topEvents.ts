@@ -1,3 +1,5 @@
+import { makeApiUrl } from "./apiBase";
+
 export type TopEvent = {
   event_id: number;
   title: string;
@@ -33,12 +35,11 @@ function emptyTopEventsResponse(): TopEventsResponse {
   };
 }
 
-export async function fetchTopEvents(limit = 5): Promise<TopEventsResponse> {
-  const API_BASE = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
-  const timeoutMs = 5000;
+export async function fetchTopEvents(limit = 5, origin?: string): Promise<TopEventsResponse> {
+  const timeoutMs = 8000;
 
   try {
-    const res = await fetch(`${API_BASE}/api/events/top?limit=${limit}`, {
+    const res = await fetch(makeApiUrl(`/api/events/top?limit=${limit}`, origin), {
       next: { revalidate: 30 },
       signal: AbortSignal.timeout(timeoutMs),
     });
