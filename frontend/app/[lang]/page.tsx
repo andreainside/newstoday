@@ -40,7 +40,9 @@ type EventTitleZhResponse = {
 };
 
 async function fetchEventTitleZh(eventId: number, origin?: string): Promise<string | null> {
-  const timeoutMs = 1500;
+  // First-time translations can take a few seconds when cache is cold.
+  // Keep the request bounded, but avoid falling back to English too early.
+  const timeoutMs = 6000;
 
   try {
     const res = await fetch(makeApiUrl(`/api/events/${eventId}/title-zh`, origin), {
@@ -119,7 +121,7 @@ export default async function LocalizedHomePage({
 
           <div className={styles.rail} role="list">
             {localizedItems.map((ev) => (
-              <a
+              <Link
                 key={ev.event_id}
                 href={`/${lang}/events/${ev.event_id}`}
                 className={styles.card}
@@ -144,7 +146,7 @@ export default async function LocalizedHomePage({
                     </div>
                   </div>
                 </div>
-              </a>
+              </Link>
             ))}
             <div className={`${styles.card} ${styles.placeholderCard}`} role="listitem">
               <div className={styles.placeholderBg} aria-hidden="true" />
