@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -45,6 +46,24 @@ def _env_int(name: str, default: int, *, min_value: int = 1, max_value: int = 20
 
 
 def _parse_fetch_rss(text: str) -> dict:
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            payload = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        parsed = {
+            "articles_inserted": int(payload.get("articles_inserted", 0)),
+            "articles_duplicate": int(payload.get("articles_duplicate", 0)),
+            "sources_ok": int(payload.get("sources_ok", 0)),
+            "sources_failed": int(payload.get("sources_failed", 0)),
+        }
+        return parsed
+
     m = re.search(r"Total inserted\s*=\s*(\d+)", text)
     if m:
         return {"articles_inserted": int(m.group(1))}
@@ -81,6 +100,69 @@ def _parse_backfill_article_types(text: str) -> dict:
     if m:
         return {"article_types_updated": int(m.group(1))}
     return {"article_types_updated": "unknown"}
+
+
+def _print_pipeline_probe(*, backend_dir: Path) -> None:
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        _print_kv(step="pipeline_probe", status="skipped", reason="missing_DATABASE_URL")
+        return
+
+    probe_sql = """
+    WITH latest_article AS (
+      SELECT published_at
+      FROM articles
+      ORDER BY published_at DESC NULLS LAST
+      LIMIT 1
+    ),
+    latest_event AS (
+      SELECT COALESCE(last_updated_at, end_time, created_at) AS ts
+      FROM events
+      ORDER BY COALESCE(last_updated_at, end_time, created_at) DESC NULLS LAST
+      LIMIT 1
+    )
+    SELECT
+      (SELECT published_at FROM latest_article) AS latest_article_ts,
+      (SELECT ts FROM latest_event) AS latest_event_ts,
+      (
+        SELECT COUNT(*)
+        FROM articles a
+        LEFT JOIN event_articles ea ON ea.article_id = a.id
+        WHERE a.published_at >= (NOW() - INTERVAL '24 hours')
+          AND a.embedding IS NOT NULL
+          AND ea.article_id IS NULL
+      ) AS unlinked_articles_24h;
+    """
+
+    cmd = [
+        sys.executable,
+        "-c",
+        (
+            "import os, json\n"
+            "from sqlalchemy import create_engine, text\n"
+            "db_url = os.environ['DATABASE_URL']\n"
+            "engine = create_engine(db_url)\n"
+            f"sql = '''{probe_sql}'''\n"
+            "with engine.begin() as conn:\n"
+            "    row = conn.execute(text(sql)).mappings().first()\n"
+            "print(json.dumps({k: (v.isoformat() if hasattr(v, 'isoformat') and v is not None else v) for k, v in dict(row).items()}, ensure_ascii=False))\n"
+        ),
+    ]
+
+    result = subprocess.run(
+        cmd,
+        cwd=str(backend_dir),
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        _print_kv(step="pipeline_probe", status="error", returncode=result.returncode)
+        if result.stderr:
+            print(result.stderr.rstrip(), file=sys.stderr)
+        return
+
+    payload = result.stdout.strip()
+    _print_kv(step="pipeline_probe", status="ok", metrics=payload)
 
 
 def _run_step(step: Step, *, backend_dir: Path, dry_run: bool) -> int:
@@ -254,6 +336,8 @@ def main() -> int:
         code = _run_step(step, backend_dir=backend_dir, dry_run=dry_run)
         if code != 0:
             return code
+
+    _print_pipeline_probe(backend_dir=backend_dir)
 
     return 0
 
