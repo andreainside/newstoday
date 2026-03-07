@@ -12,7 +12,9 @@ concurrency:
 jobs:
   update_live:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # update_live includes dependency install + embedding backfill + clustering,
+    # which can frequently exceed 20 minutes on hosted runners.
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v4
