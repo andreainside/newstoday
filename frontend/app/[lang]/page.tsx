@@ -1,9 +1,10 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import styles from "../page.module.css";
 import { assignEventBackgrounds } from "../lib/eventBg";
 import { fetchTopEvents } from "../lib/topEvents";
-import { makeApiUrl } from "../lib/apiBase";
+import { getRequestOriginFromHeaders, makeApiUrl } from "../lib/apiBase";
 
 const SUPPORTED_LANGS = new Set(["en", "zh"]);
 
@@ -38,11 +39,11 @@ type EventTitleZhResponse = {
   status: string;
 };
 
-async function fetchEventTitleZh(eventId: number): Promise<string | null> {
+async function fetchEventTitleZh(eventId: number, origin?: string): Promise<string | null> {
   const timeoutMs = 1500;
 
   try {
-    const res = await fetch(makeApiUrl(`/api/events/${eventId}/title-zh`), {
+    const res = await fetch(makeApiUrl(`/api/events/${eventId}/title-zh`, origin), {
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -69,11 +70,13 @@ export default async function LocalizedHomePage({
   }
 
   const t = copyFor(lang);
-  const data = await fetchTopEvents(5);
+  const requestHeaders = await headers();
+  const requestOrigin = getRequestOriginFromHeaders(requestHeaders);
+  const data = await fetchTopEvents(5, requestOrigin);
   const localizedItems = lang === "zh"
     ? await Promise.all(
       data.items.map(async (ev) => {
-        const zhTitle = await fetchEventTitleZh(ev.event_id);
+        const zhTitle = await fetchEventTitleZh(ev.event_id, requestOrigin);
         return {
           ...ev,
           title: zhTitle || ev.title,

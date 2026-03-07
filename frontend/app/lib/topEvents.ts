@@ -35,11 +35,11 @@ function emptyTopEventsResponse(): TopEventsResponse {
   };
 }
 
-export async function fetchTopEvents(limit = 5): Promise<TopEventsResponse> {
+export async function fetchTopEvents(limit = 5, origin?: string): Promise<TopEventsResponse> {
   const timeoutMs = 8000;
 
   try {
-    const res = await fetch(makeApiUrl(`/api/events/top?limit=${limit}`), {
+    const res = await fetch(makeApiUrl(`/api/events/top?limit=${limit}`, origin), {
       next: { revalidate: 30 },
       signal: AbortSignal.timeout(timeoutMs),
     });
