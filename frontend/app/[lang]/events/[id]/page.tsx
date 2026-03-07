@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { makeApiUrl } from "../../../lib/apiBase";
 import { toSourceNameZh } from "../../../lib/sourceNameZh";
 import SourceNewspaperCard, { type SourceArticle } from "./components/SourceNewspaperCard";
 import styles from "./eventDetail.module.css";
@@ -84,8 +85,7 @@ function copyFor(lang: string) {
 }
 
 async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
-  const res = await fetch(`${API_BASE}/api/events/${id}`, {
+  const res = await fetch(makeApiUrl(`/api/events/${id}`), {
     cache: "no-store",
   });
 
@@ -101,9 +101,8 @@ async function fetchEventDetail(id: string): Promise<EventDetailResponse> {
 }
 
 async function fetchEventTitleZh(id: string): Promise<EventTitleZhResponse | null> {
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
   try {
-    const res = await fetch(`${API_BASE}/api/events/${id}/title-zh`, {
+    const res = await fetch(makeApiUrl(`/api/events/${id}/title-zh`), {
       cache: "no-store",
     });
     if (!res.ok) return null;
