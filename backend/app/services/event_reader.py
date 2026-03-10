@@ -5,7 +5,7 @@ import os
 import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional,Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Result
@@ -23,6 +23,20 @@ from app.services.event_title_ai import (
 WINDOW_HOURS = 72
 TAU_HOURS = 12
 WEIGHTS = {"hot": 0.25, "div": 0.20, "fresh": 0.55}
+TOP_EVENTS_CANDIDATE_MULTIPLIER = 6
+TOP_EVENTS_MAX_CANDIDATES = 60
+TOP_EVENTS_MIN_CANDIDATES = 20
+TOP_EVENTS_RECENT_WINDOW_HOURS = 24.0
+TOP_EVENTS_RECENT_RESERVED = 2
+TOP_EVENTS_SIMILARITY_BLOCK = 0.38
+TOP_EVENTS_SIMILARITY_RELAXED = 0.55
+
+NEGATION_TOKENS = {
+  "no", "not", "never", "unclear", "undefined", "unknown", "denies", "deny", "without",
+}
+ASSERTIVE_TOKENS = {
+  "confirmed", "confirms", "confirm", "announces", "outlined", "outlines", "declares", "says",
+}
 
 SQL_TOP_EVENTS = """
 WITH stats AS (
@@ -163,6 +177,141 @@ def _utc_now() -> datetime:
   return datetime.now(timezone.utc)
 
 
+def _title_tokens(title: str) -> Set[str]:
+  cleaned = "".join(ch.lower() if (ch.isalnum() or ch.isspace()) else " " for ch in (title or ""))
+  return {t for t in cleaned.split() if len(t) >= 3}
+
+
+def _title_jaccard(a: str, b: str) -> float:
+  ta = _title_tokens(a)
+  tb = _title_tokens(b)
+  if not ta or not tb:
+    return 0.0
+  inter = len(ta & tb)
+  union = len(ta | tb)
+  return inter / max(1, union)
+
+
+def _likely_conflicting_titles(a: str, b: str) -> bool:
+  ta = _title_tokens(a)
+  tb = _title_tokens(b)
+  if not ta or not tb:
+    return False
+  overlap = len(ta & tb)
+  if overlap < 2:
+    return False
+  a_neg = len(ta & NEGATION_TOKENS) > 0
+  b_neg = len(tb & NEGATION_TOKENS) > 0
+  a_assertive = len(ta & ASSERTIVE_TOKENS) > 0
+  b_assertive = len(tb & ASSERTIVE_TOKENS) > 0
+  return (a_neg and b_assertive) or (b_neg and a_assertive)
+
+
+def _event_age_hours(item: Dict[str, Any]) -> float:
+  return float((item.get("score_components") or {}).get("age_hours", 9999.0))
+
+
+def _is_compatible_with_selected(
+  cand: Dict[str, Any],
+  selected: List[Dict[str, Any]],
+  similarity_threshold: float,
+  strict_conflict_block: bool,
+) -> bool:
+  cand_title = str(cand.get("title", ""))
+  for prev in selected:
+    prev_title = str(prev.get("title", ""))
+    if _title_jaccard(cand_title, prev_title) >= similarity_threshold:
+      return False
+    if strict_conflict_block and _likely_conflicting_titles(cand_title, prev_title):
+      return False
+  return True
+
+
+def _candidate_value(cand: Dict[str, Any], selected: List[Dict[str, Any]]) -> float:
+  cand_score = float(cand.get("score", 0.0))
+  age_hours = _event_age_hours(cand)
+  freshness_boost = max(0.0, 1.0 - (age_hours / TOP_EVENTS_RECENT_WINDOW_HOURS))
+
+  sim_penalty = 0.0
+  for prev in selected:
+    sim = _title_jaccard(str(cand.get("title", "")), str(prev.get("title", "")))
+    sim_penalty = max(sim_penalty, sim)
+
+  return cand_score + 0.30 * freshness_boost - 0.45 * sim_penalty
+
+
+def _rerank_top_events(items: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+  if len(items) <= limit:
+    return items
+
+  selected: List[Dict[str, Any]] = []
+  remaining = items[:]
+
+  # 第一阶段：保留最多2条“24小时内”事件，且必须互相不近似，减少新事件延迟。
+  recent_candidates = [
+    it for it in remaining
+    if _event_age_hours(it) <= TOP_EVENTS_RECENT_WINDOW_HOURS
+  ]
+  recent_candidates.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
+
+  reserved = min(limit, TOP_EVENTS_RECENT_RESERVED)
+  for cand in recent_candidates:
+    if len(selected) >= reserved:
+      break
+    if not _is_compatible_with_selected(
+      cand,
+      selected,
+      similarity_threshold=TOP_EVENTS_SIMILARITY_BLOCK,
+      strict_conflict_block=True,
+    ):
+      continue
+    selected.append(cand)
+
+  selected_ids = {int(it["event_id"]) for it in selected}
+  remaining = [it for it in remaining if int(it["event_id"]) not in selected_ids]
+
+  # 第二阶段：硬性拦截“标题过近似/明显冲突”的候选。
+  while len(selected) < limit and remaining:
+    compatible = [
+      cand for cand in remaining
+      if _is_compatible_with_selected(
+        cand,
+        selected,
+        similarity_threshold=TOP_EVENTS_SIMILARITY_BLOCK,
+        strict_conflict_block=True,
+      )
+    ]
+    if not compatible:
+      break
+
+    best = max(compatible, key=lambda x: _candidate_value(x, selected))
+    selected.append(best)
+    best_id = int(best["event_id"])
+    remaining = [it for it in remaining if int(it["event_id"]) != best_id]
+
+  # 第三阶段（放宽兜底）：只放宽近似阈值，冲突仍拦截，确保能补满。
+  while len(selected) < limit and remaining:
+    compatible = [
+      cand for cand in remaining
+      if _is_compatible_with_selected(
+        cand,
+        selected,
+        similarity_threshold=TOP_EVENTS_SIMILARITY_RELAXED,
+        strict_conflict_block=True,
+      )
+    ]
+    if compatible:
+      best = max(compatible, key=lambda x: _candidate_value(x, selected))
+    else:
+      best = max(remaining, key=lambda x: _candidate_value(x, selected))
+
+    selected.append(best)
+    best_id = int(best["event_id"])
+    remaining = [it for it in remaining if int(it["event_id"]) != best_id]
+
+  return selected[:limit]
+
+
 def _bootstrap_event_ai_cache_table(db) -> None:
   if EVENT_AI_AUTO_CREATE_TABLE:
     db.execute(text(SQL_ENSURE_EVENT_AI_CACHE))
@@ -174,6 +323,11 @@ def get_top_events(limit: int) -> Dict[str, Any]:
   with SessionLocal() as db:
     _bootstrap_event_ai_cache_table(db)
 
+    candidate_limit = max(
+      TOP_EVENTS_MIN_CANDIDATES,
+      min(TOP_EVENTS_MAX_CANDIDATES, limit * TOP_EVENTS_CANDIDATE_MULTIPLIER),
+    )
+
     rows: Result = db.execute(
       text(SQL_TOP_EVENTS),
       {
@@ -183,7 +337,7 @@ def get_top_events(limit: int) -> Dict[str, Any]:
         "w_hot": WEIGHTS["hot"],
         "w_div": WEIGHTS["div"],
         "w_fresh": WEIGHTS["fresh"],
-        "limit": limit,
+        "limit": candidate_limit,
       },
     )
     items: List[Dict[str, Any]] = []
@@ -309,6 +463,8 @@ def get_top_events(limit: int) -> Dict[str, Any]:
                 "error": str(ai_result.get("error") or "unknown_error")[:1000],
               },
             )
+
+      items = _rerank_top_events(items, limit)
 
       if items:
         db.commit()
