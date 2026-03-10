@@ -5,7 +5,7 @@ import os
 import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional,Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Result
@@ -23,6 +23,17 @@ from app.services.event_title_ai import (
 WINDOW_HOURS = 72
 TAU_HOURS = 12
 WEIGHTS = {"hot": 0.25, "div": 0.20, "fresh": 0.55}
+TOP_EVENTS_CANDIDATE_MULTIPLIER = 6
+TOP_EVENTS_MAX_CANDIDATES = 60
+TOP_EVENTS_MIN_CANDIDATES = 20
+TOP_EVENTS_FRESH_HOURS = 12.0
+
+NEGATION_TOKENS = {
+  "no", "not", "never", "unclear", "undefined", "unknown", "denies", "deny", "without",
+}
+ASSERTIVE_TOKENS = {
+  "confirmed", "confirms", "confirm", "announces", "outlined", "outlines", "declares", "says",
+}
 
 SQL_TOP_EVENTS = """
 WITH stats AS (
@@ -163,6 +174,82 @@ def _utc_now() -> datetime:
   return datetime.now(timezone.utc)
 
 
+def _title_tokens(title: str) -> Set[str]:
+  cleaned = "".join(ch.lower() if (ch.isalnum() or ch.isspace()) else " " for ch in (title or ""))
+  return {t for t in cleaned.split() if len(t) >= 3}
+
+
+def _title_jaccard(a: str, b: str) -> float:
+  ta = _title_tokens(a)
+  tb = _title_tokens(b)
+  if not ta or not tb:
+    return 0.0
+  inter = len(ta & tb)
+  union = len(ta | tb)
+  return inter / max(1, union)
+
+
+def _likely_conflicting_titles(a: str, b: str) -> bool:
+  ta = _title_tokens(a)
+  tb = _title_tokens(b)
+  if not ta or not tb:
+    return False
+  overlap = len(ta & tb)
+  if overlap < 2:
+    return False
+  a_neg = len(ta & NEGATION_TOKENS) > 0
+  b_neg = len(tb & NEGATION_TOKENS) > 0
+  a_assertive = len(ta & ASSERTIVE_TOKENS) > 0
+  b_assertive = len(tb & ASSERTIVE_TOKENS) > 0
+  return (a_neg and b_assertive) or (b_neg and a_assertive)
+
+
+def _rerank_top_events(items: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+  if len(items) <= limit:
+    return items
+
+  selected: List[Dict[str, Any]] = []
+  remaining = items[:]
+
+  # 保证至少有一个“非常新”的事件进入展示，减少重要新事件延迟。
+  fresh_candidates = [
+    it for it in items
+    if float((it.get("score_components") or {}).get("age_hours", 9999.0)) <= TOP_EVENTS_FRESH_HOURS
+  ]
+  if fresh_candidates:
+    best_fresh = max(
+      fresh_candidates,
+      key=lambda x: float(x.get("score", 0.0)),
+    )
+    selected.append(best_fresh)
+    remaining = [it for it in remaining if int(it["event_id"]) != int(best_fresh["event_id"])]
+
+  while len(selected) < limit and remaining:
+    best_idx = 0
+    best_value = float("-inf")
+    for idx, cand in enumerate(remaining):
+      cand_score = float(cand.get("score", 0.0))
+      age_hours = float((cand.get("score_components") or {}).get("age_hours", 9999.0))
+      freshness_boost = max(0.0, 1.0 - (age_hours / 24.0))
+
+      sim_penalty = 0.0
+      conflict_penalty = 0.0
+      for prev in selected:
+        sim = _title_jaccard(str(cand.get("title", "")), str(prev.get("title", "")))
+        sim_penalty = max(sim_penalty, sim)
+        if _likely_conflicting_titles(str(cand.get("title", "")), str(prev.get("title", ""))):
+          conflict_penalty = max(conflict_penalty, 1.0)
+
+      value = cand_score + 0.25 * freshness_boost - 0.35 * sim_penalty - 0.50 * conflict_penalty
+      if value > best_value:
+        best_value = value
+        best_idx = idx
+
+    selected.append(remaining.pop(best_idx))
+
+  return selected[:limit]
+
+
 def _bootstrap_event_ai_cache_table(db) -> None:
   if EVENT_AI_AUTO_CREATE_TABLE:
     db.execute(text(SQL_ENSURE_EVENT_AI_CACHE))
@@ -174,6 +261,11 @@ def get_top_events(limit: int) -> Dict[str, Any]:
   with SessionLocal() as db:
     _bootstrap_event_ai_cache_table(db)
 
+    candidate_limit = max(
+      TOP_EVENTS_MIN_CANDIDATES,
+      min(TOP_EVENTS_MAX_CANDIDATES, limit * TOP_EVENTS_CANDIDATE_MULTIPLIER),
+    )
+
     rows: Result = db.execute(
       text(SQL_TOP_EVENTS),
       {
@@ -183,7 +275,7 @@ def get_top_events(limit: int) -> Dict[str, Any]:
         "w_hot": WEIGHTS["hot"],
         "w_div": WEIGHTS["div"],
         "w_fresh": WEIGHTS["fresh"],
-        "limit": limit,
+        "limit": candidate_limit,
       },
     )
     items: List[Dict[str, Any]] = []
@@ -309,6 +401,8 @@ def get_top_events(limit: int) -> Dict[str, Any]:
                 "error": str(ai_result.get("error") or "unknown_error")[:1000],
               },
             )
+
+      items = _rerank_top_events(items, limit)
 
       if items:
         db.commit()
