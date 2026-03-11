@@ -38,6 +38,23 @@ WHERE id = :article_id
 """
 
 
+def _detect_article_type_columns(conn) -> tuple[bool, bool]:
+    """Return (has_article_type, has_article_type_reason) on public.articles."""
+    rows = conn.execute(
+        text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'articles'
+              AND column_name IN ('article_type', 'article_type_reason')
+            """
+        )
+    ).scalars().all()
+    columns = set(rows)
+    return ("article_type" in columns, "article_type_reason" in columns)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Backfill article_type for articles")
     parser.add_argument(
@@ -65,6 +82,12 @@ def main() -> None:
     print(f"since = {since.isoformat()}  limit = {args.limit}  force = {args.force}")
 
     with engine.begin() as conn:
+        has_article_type, has_article_type_reason = _detect_article_type_columns(conn)
+        if not has_article_type:
+            print("Skip: articles.article_type column not found; nothing to backfill")
+            print("Updated 0 articles")
+            return
+
         rows = conn.execute(
             text(SQL_SELECT_ARTICLES),
             {
@@ -96,13 +119,27 @@ def main() -> None:
                 if existing is not None:
                     continue
 
-            conn.execute(
-                text(SQL_UPDATE_ARTICLE),
-                {
+            if has_article_type_reason:
+                update_sql = SQL_UPDATE_ARTICLE
+                update_params = {
                     "article_id": row["article_id"],
                     "article_type": res.article_type,
                     "article_type_reason": ",".join(res.reasons),
-                },
+                }
+            else:
+                update_sql = """
+                UPDATE articles
+                SET article_type = :article_type
+                WHERE id = :article_id
+                """
+                update_params = {
+                    "article_id": row["article_id"],
+                    "article_type": res.article_type,
+                }
+
+            conn.execute(
+                text(update_sql),
+                update_params,
             )
             updated += 1
 
