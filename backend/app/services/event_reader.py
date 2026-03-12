@@ -4,7 +4,7 @@ import math
 import os
 import json
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Tuple, Set
 
 from sqlalchemy import bindparam, text
@@ -214,6 +214,16 @@ ON CONFLICT (event_id, provider, model) DO NOTHING
 RETURNING event_id;
 """
 
+SQL_EVENT_AI_CACHE_REFRESH_CLAIM = """
+UPDATE event_ai_cache
+SET status = 'PENDING', output_json = NULL, error = NULL, updated_at = now()
+WHERE event_id = :event_id
+  AND provider = :provider
+  AND model = :model
+  AND updated_at <= :stale_before
+RETURNING event_id;
+"""
+
 SQL_ENSURE_EVENT_AI_CACHE = """
 CREATE TABLE IF NOT EXISTS event_ai_cache (
   id bigserial PRIMARY KEY,
@@ -231,11 +241,16 @@ CREATE TABLE IF NOT EXISTS event_ai_cache (
 EVENT_TITLE_PROMPT_VERSION = "event_title_v1"
 EVENT_TITLE_INPUT_HASH = "top_titles_v1"
 EVENT_AI_PENDING_RETRY_SECONDS = int(os.getenv("EVENT_AI_PENDING_RETRY_SECONDS", "90"))
+EVENT_AI_REFRESH_DAYS = float(os.getenv("EVENT_AI_REFRESH_DAYS", "2"))
 EVENT_AI_AUTO_CREATE_TABLE = os.getenv("EVENT_AI_AUTO_CREATE_TABLE", "1") == "1"
 
 def _utc_now() -> datetime:
   # 统一用 UTC，避免前后端时区混乱
   return datetime.now(timezone.utc)
+
+
+def _as_utc(ts: datetime) -> datetime:
+  return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
 def _title_tokens(title: str) -> Set[str]:
@@ -459,9 +474,15 @@ def get_top_events(limit: int) -> Dict[str, Any]:
             "model": model,
           },
         ).mappings().first()
+        now_ts = _utc_now()
+        refresh_cutoff = now_ts - timedelta(days=max(0.1, EVENT_AI_REFRESH_DAYS))
+        stale_retry_cutoff = now_ts - timedelta(seconds=max(1, EVENT_AI_PENDING_RETRY_SECONDS))
+
         if cached and cached.get("status") == "SUCCESS":
           output_json = cached.get("output_json") or {}
           cached_title = output_json.get("title") if isinstance(output_json, dict) else None
+          updated_at = cached.get("updated_at")
+          is_stale = isinstance(updated_at, datetime) and _as_utc(updated_at) <= refresh_cutoff
           if cached_title:
             log_json(
               "deepseek_call",
@@ -475,24 +496,51 @@ def get_top_events(limit: int) -> Dict[str, Any]:
               cache_hit=True,
             )
             item["title"] = cached_title
+          if not is_stale:
             continue
+
+        # SUCCESS 太旧 / ERROR / 长时间 PENDING：可重新 claim 刷新。
         if cached and cached.get("status") == "PENDING":
           updated_at = cached.get("updated_at")
-          if isinstance(updated_at, datetime):
-            ts = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
-            if (_utc_now() - ts).total_seconds() < EVENT_AI_PENDING_RETRY_SECONDS:
-              continue
-        # retry stale PENDING and previous ERROR entries
+          if isinstance(updated_at, datetime) and _as_utc(updated_at) > stale_retry_cutoff:
+            continue
 
-        claim_row = db.execute(
-          text(SQL_EVENT_AI_CACHE_CLAIM),
-          {
-            "event_id": event_id,
-            "provider": "deepseek",
-            "model": model,
-          },
-        ).mappings().first()
+        claim_row = None
+        if not cached:
+          claim_row = db.execute(
+            text(SQL_EVENT_AI_CACHE_CLAIM),
+            {
+              "event_id": event_id,
+              "provider": "deepseek",
+              "model": model,
+            },
+          ).mappings().first()
+        else:
+          stale_before = refresh_cutoff if cached.get("status") == "SUCCESS" else stale_retry_cutoff
+          claim_row = db.execute(
+            text(SQL_EVENT_AI_CACHE_REFRESH_CLAIM),
+            {
+              "event_id": event_id,
+              "provider": "deepseek",
+              "model": model,
+              "stale_before": stale_before,
+            },
+          ).mappings().first()
+          if not claim_row and cached.get("status") in ("ERROR", "PENDING"):
+            # 兼容旧数据：不存在行锁刷新机会时，允许首次插入 claim。
+            claim_row = db.execute(
+              text(SQL_EVENT_AI_CACHE_CLAIM),
+              {
+                "event_id": event_id,
+                "provider": "deepseek",
+                "model": model,
+              },
+            ).mappings().first()
+
         if not claim_row:
+          if cached and cached.get("status") == "SUCCESS":
+            # 已有旧标题但未拿到刷新 claim（可能被并发占用）时，先降级返回旧标题。
+              continue
           continue
 
         ai_result = summarize_event_title(article_titles, event_id=event_id)
