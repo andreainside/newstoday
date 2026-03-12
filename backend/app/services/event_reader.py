@@ -101,6 +101,7 @@ lifetime_stats AS (
   FROM events e
   JOIN event_articles ea ON ea.event_id = e.id
   JOIN articles a ON a.id = ea.article_id
+  WHERE e.id IN (SELECT event_id FROM recent_stats)
   GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, e.created_at
 ),
 scored AS (
@@ -424,6 +425,9 @@ def get_top_events(limit: int) -> Dict[str, Any]:
         }
       )
 
+    # 先做排序/去重，再对最终候选做 AI 标题，避免对大量候选事件发起不必要调用。
+    items = _rerank_top_events(items, limit)
+
     try:
       event_ids = [int(item["event_id"]) for item in items]
       titles_map: Dict[int, List[str]] = defaultdict(list)
@@ -526,8 +530,6 @@ def get_top_events(limit: int) -> Dict[str, Any]:
                 "error": str(ai_result.get("error") or "unknown_error")[:1000],
               },
             )
-
-      items = _rerank_top_events(items, limit)
 
       if items:
         db.commit()
