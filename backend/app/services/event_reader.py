@@ -5,7 +5,7 @@ import os
 import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Tuple, Set
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Result
@@ -19,10 +19,17 @@ from app.services.event_title_ai import (
   summarize_event_title,
 )
 
-# v0 固定口径参数（稳定、可复现）
-WINDOW_HOURS = 72
-TAU_HOURS = 12
-WEIGHTS = {"hot": 0.25, "div": 0.20, "fresh": 0.55}
+# v1 top-events 口径：仅考察近 7 天文章；文章按时间衰减计分
+TOP_EVENTS_LOOKBACK_DAYS = 7
+TOP_EVENTS_LOOKBACK_HOURS = TOP_EVENTS_LOOKBACK_DAYS * 24
+TOP_EVENTS_DECAY_TAU_HOURS = 48
+TOP_EVENTS_SOURCE_BONUS_WEIGHT = 0.25
+TOP_EVENTS_SOURCE_DOMINANCE_PENALTY = 0.70
+TOP_EVENTS_MIN_CONCENTRATION_FACTOR = 0.20
+
+# 详情页展示口径：超过 30 天的文章直接忽略
+ARTICLE_DISPLAY_MAX_AGE_DAYS = 30
+ARTICLE_DISPLAY_MAX_AGE_HOURS = ARTICLE_DISPLAY_MAX_AGE_DAYS * 24
 TOP_EVENTS_CANDIDATE_MULTIPLIER = 6
 TOP_EVENTS_MAX_CANDIDATES = 60
 TOP_EVENTS_MIN_CANDIDATES = 20
@@ -39,7 +46,49 @@ ASSERTIVE_TOKENS = {
 }
 
 SQL_TOP_EVENTS = """
-WITH stats AS (
+WITH article_stats AS (
+  SELECT
+    ea.event_id,
+    a.source_id,
+    EXTRACT(EPOCH FROM (:as_of_ts - a.published_at))/3600.0 AS age_hours,
+    EXP(-(EXTRACT(EPOCH FROM (:as_of_ts - a.published_at))/3600.0) / :tau_hours) AS time_weight
+  FROM event_articles ea
+  JOIN articles a ON a.id = ea.article_id
+  WHERE a.published_at IS NOT NULL
+    AND a.published_at >= (:as_of_ts - (:lookback_hours || ' hours')::interval)
+),
+source_stats AS (
+  SELECT
+    event_id,
+    source_id,
+    COUNT(*) AS source_articles,
+    SUM(time_weight) AS source_weight,
+    MAX(age_hours) AS source_max_age_hours
+  FROM article_stats
+  GROUP BY event_id, source_id
+),
+source_stats_with_share AS (
+  SELECT
+    event_id,
+    source_id,
+    source_articles,
+    source_weight,
+    source_max_age_hours,
+    source_articles::float / NULLIF(SUM(source_articles) OVER (PARTITION BY event_id), 0) AS source_share
+  FROM source_stats
+),
+recent_stats AS (
+  SELECT
+    s.event_id,
+    SUM(s.source_articles) AS recent_articles_count,
+    COUNT(*) AS recent_sources_count,
+    SUM(s.source_weight) AS recent_weight_sum,
+    MAX(s.source_max_age_hours) AS max_recent_age_hours,
+    MAX(s.source_share) AS max_source_share
+  FROM source_stats_with_share s
+  GROUP BY s.event_id
+),
+lifetime_stats AS (
   SELECT
     e.id AS event_id,
     COALESCE(e.representative_title, e.title) AS title,
@@ -52,21 +101,32 @@ WITH stats AS (
   FROM events e
   JOIN event_articles ea ON ea.event_id = e.id
   JOIN articles a ON a.id = ea.article_id
+  WHERE e.id IN (SELECT event_id FROM recent_stats)
   GROUP BY e.id, e.representative_title, e.title, e.start_time, e.end_time, e.created_at
-  HAVING MAX(a.published_at) >= (:as_of_ts - (:window_hours || ' hours')::interval)
 ),
 scored AS (
   SELECT
-    s.*,
-    EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0 AS age_hours,
-    (LN(1 + s.articles_count) / (1 + (EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0) / 24.0)) AS hot,
-    LN(1 + s.sources_count) AS div,
-    EXP(-(EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0) / :tau_hours) AS fresh,
-    (:w_hot * (LN(1 + s.articles_count) / (1 + (EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0) / 24.0))
-     + :w_div * LN(1 + s.sources_count)
-     + :w_fresh * EXP(-(EXTRACT(EPOCH FROM (:as_of_ts - s.max_article_time))/3600.0) / :tau_hours)
+    l.*,
+    r.recent_articles_count,
+    r.recent_sources_count,
+    r.recent_weight_sum,
+    r.max_recent_age_hours AS age_hours,
+    r.max_source_share,
+    (1.0 + :source_bonus_weight * LN(1 + r.recent_sources_count)) AS source_bonus,
+    GREATEST(
+      :min_concentration_factor,
+      1.0 - :source_dominance_penalty * COALESCE(r.max_source_share, 1.0)
+    ) AS concentration_factor,
+    (
+      r.recent_weight_sum
+      * (1.0 + :source_bonus_weight * LN(1 + r.recent_sources_count))
+      * GREATEST(
+          :min_concentration_factor,
+          1.0 - :source_dominance_penalty * COALESCE(r.max_source_share, 1.0)
+        )
     ) AS score
-  FROM stats s
+  FROM lifetime_stats l
+  JOIN recent_stats r ON r.event_id = l.event_id
 )
 SELECT *
 FROM scored
@@ -114,6 +174,7 @@ FROM event_articles ea
 JOIN articles a ON a.id = ea.article_id
 JOIN sources s ON s.id = a.source_id
 WHERE ea.event_id = :event_id
+  AND a.published_at >= (:as_of_ts - (:display_hours || ' hours')::interval)
 ORDER BY a.published_at DESC NULLS LAST, a.id DESC;
 """
 
@@ -153,6 +214,16 @@ ON CONFLICT (event_id, provider, model) DO NOTHING
 RETURNING event_id;
 """
 
+SQL_EVENT_AI_CACHE_REFRESH_CLAIM = """
+UPDATE event_ai_cache
+SET status = 'PENDING', output_json = NULL, error = NULL, updated_at = now()
+WHERE event_id = :event_id
+  AND provider = :provider
+  AND model = :model
+  AND updated_at <= :stale_before
+RETURNING event_id;
+"""
+
 SQL_ENSURE_EVENT_AI_CACHE = """
 CREATE TABLE IF NOT EXISTS event_ai_cache (
   id bigserial PRIMARY KEY,
@@ -170,11 +241,16 @@ CREATE TABLE IF NOT EXISTS event_ai_cache (
 EVENT_TITLE_PROMPT_VERSION = "event_title_v1"
 EVENT_TITLE_INPUT_HASH = "top_titles_v1"
 EVENT_AI_PENDING_RETRY_SECONDS = int(os.getenv("EVENT_AI_PENDING_RETRY_SECONDS", "90"))
+EVENT_AI_REFRESH_DAYS = float(os.getenv("EVENT_AI_REFRESH_DAYS", "2"))
 EVENT_AI_AUTO_CREATE_TABLE = os.getenv("EVENT_AI_AUTO_CREATE_TABLE", "1") == "1"
 
 def _utc_now() -> datetime:
   # 统一用 UTC，避免前后端时区混乱
   return datetime.now(timezone.utc)
+
+
+def _as_utc(ts: datetime) -> datetime:
+  return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
 def _title_tokens(title: str) -> Set[str]:
@@ -332,11 +408,11 @@ def get_top_events(limit: int) -> Dict[str, Any]:
       text(SQL_TOP_EVENTS),
       {
         "as_of_ts": as_of,
-        "window_hours": WINDOW_HOURS,
-        "tau_hours": TAU_HOURS,
-        "w_hot": WEIGHTS["hot"],
-        "w_div": WEIGHTS["div"],
-        "w_fresh": WEIGHTS["fresh"],
+        "lookback_hours": TOP_EVENTS_LOOKBACK_HOURS,
+        "tau_hours": TOP_EVENTS_DECAY_TAU_HOURS,
+        "source_bonus_weight": TOP_EVENTS_SOURCE_BONUS_WEIGHT,
+        "source_dominance_penalty": TOP_EVENTS_SOURCE_DOMINANCE_PENALTY,
+        "min_concentration_factor": TOP_EVENTS_MIN_CONCENTRATION_FACTOR,
         "limit": candidate_limit,
       },
     )
@@ -353,13 +429,19 @@ def get_top_events(limit: int) -> Dict[str, Any]:
           "sources_count": r["sources_count"],
           "score": float(r["score"]),
           "score_components": {
-            "hot": float(r["hot"]),
-            "div": float(r["div"]),
-            "fresh": float(r["fresh"]),
+            "recent_weight_sum": float(r["recent_weight_sum"]),
+            "recent_articles_count": int(r["recent_articles_count"]),
+            "recent_sources_count": int(r["recent_sources_count"]),
+            "source_bonus": float(r["source_bonus"]),
+            "max_source_share": float(r["max_source_share"]),
+            "concentration_factor": float(r["concentration_factor"]),
             "age_hours": float(r["age_hours"]),
           },
         }
       )
+
+    # 先做排序/去重，再对最终候选做 AI 标题，避免对大量候选事件发起不必要调用。
+    items = _rerank_top_events(items, limit)
 
     try:
       event_ids = [int(item["event_id"]) for item in items]
@@ -392,9 +474,15 @@ def get_top_events(limit: int) -> Dict[str, Any]:
             "model": model,
           },
         ).mappings().first()
+        now_ts = _utc_now()
+        refresh_cutoff = now_ts - timedelta(days=max(0.1, EVENT_AI_REFRESH_DAYS))
+        stale_retry_cutoff = now_ts - timedelta(seconds=max(1, EVENT_AI_PENDING_RETRY_SECONDS))
+
         if cached and cached.get("status") == "SUCCESS":
           output_json = cached.get("output_json") or {}
           cached_title = output_json.get("title") if isinstance(output_json, dict) else None
+          updated_at = cached.get("updated_at")
+          is_stale = isinstance(updated_at, datetime) and _as_utc(updated_at) <= refresh_cutoff
           if cached_title:
             log_json(
               "deepseek_call",
@@ -408,24 +496,51 @@ def get_top_events(limit: int) -> Dict[str, Any]:
               cache_hit=True,
             )
             item["title"] = cached_title
+          if not is_stale:
             continue
+
+        # SUCCESS 太旧 / ERROR / 长时间 PENDING：可重新 claim 刷新。
         if cached and cached.get("status") == "PENDING":
           updated_at = cached.get("updated_at")
-          if isinstance(updated_at, datetime):
-            ts = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
-            if (_utc_now() - ts).total_seconds() < EVENT_AI_PENDING_RETRY_SECONDS:
-              continue
-        # retry stale PENDING and previous ERROR entries
+          if isinstance(updated_at, datetime) and _as_utc(updated_at) > stale_retry_cutoff:
+            continue
 
-        claim_row = db.execute(
-          text(SQL_EVENT_AI_CACHE_CLAIM),
-          {
-            "event_id": event_id,
-            "provider": "deepseek",
-            "model": model,
-          },
-        ).mappings().first()
+        claim_row = None
+        if not cached:
+          claim_row = db.execute(
+            text(SQL_EVENT_AI_CACHE_CLAIM),
+            {
+              "event_id": event_id,
+              "provider": "deepseek",
+              "model": model,
+            },
+          ).mappings().first()
+        else:
+          stale_before = refresh_cutoff if cached.get("status") == "SUCCESS" else stale_retry_cutoff
+          claim_row = db.execute(
+            text(SQL_EVENT_AI_CACHE_REFRESH_CLAIM),
+            {
+              "event_id": event_id,
+              "provider": "deepseek",
+              "model": model,
+              "stale_before": stale_before,
+            },
+          ).mappings().first()
+          if not claim_row and cached.get("status") in ("ERROR", "PENDING"):
+            # 兼容旧数据：不存在行锁刷新机会时，允许首次插入 claim。
+            claim_row = db.execute(
+              text(SQL_EVENT_AI_CACHE_CLAIM),
+              {
+                "event_id": event_id,
+                "provider": "deepseek",
+                "model": model,
+              },
+            ).mappings().first()
+
         if not claim_row:
+          if cached and cached.get("status") == "SUCCESS":
+            # 已有旧标题但未拿到刷新 claim（可能被并发占用）时，先降级返回旧标题。
+              continue
           continue
 
         ai_result = summarize_event_title(article_titles, event_id=event_id)
@@ -464,8 +579,6 @@ def get_top_events(limit: int) -> Dict[str, Any]:
               },
             )
 
-      items = _rerank_top_events(items, limit)
-
       if items:
         db.commit()
     except Exception as exc:
@@ -478,9 +591,13 @@ def get_top_events(limit: int) -> Dict[str, Any]:
 
   return {
     "as_of": as_of.isoformat(),
-    "window_hours": WINDOW_HOURS,
-    "tau_hours": TAU_HOURS,
-    "weights": WEIGHTS,
+    "window_hours": TOP_EVENTS_LOOKBACK_HOURS,
+    "tau_hours": TOP_EVENTS_DECAY_TAU_HOURS,
+    "weights": {
+      "source_bonus_weight": TOP_EVENTS_SOURCE_BONUS_WEIGHT,
+      "source_dominance_penalty": TOP_EVENTS_SOURCE_DOMINANCE_PENALTY,
+      "min_concentration_factor": TOP_EVENTS_MIN_CONCENTRATION_FACTOR,
+    },
     "items": items,
   }
 
@@ -516,7 +633,14 @@ def get_event_detail(event_id: int, diversity: int = 0, debug: bool = False) -> 
       )
 
     article_rows = list(
-      db.execute(text(SQL_EVENT_ARTICLES), {"event_id": event_id}).mappings()
+      db.execute(
+        text(SQL_EVENT_ARTICLES),
+        {
+          "event_id": event_id,
+          "as_of_ts": _utc_now(),
+          "display_hours": ARTICLE_DISPLAY_MAX_AGE_HOURS,
+        },
+      ).mappings()
     )
 
   # 直接复用你已经跑通的 2.2B 逻辑
