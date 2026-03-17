@@ -32,6 +32,12 @@ function EventHeader({
     ? `${coverage.start} ~ ${coverage.end}`
     : coverage.start || coverage.end;
   const lastSeen = fmtTimeToMinute(event.last_seen_at);
+  const articleChipText = lang === "zh"
+    ? `${event.articles_count}${t.articles}`
+    : `${t.articles} ${event.articles_count}`;
+  const sourceChipText = lang === "zh"
+    ? `${event.sources_count}${t.sources}`
+    : `${t.sources} ${event.sources_count}`;
 
   return (
     <section className={styles.header}>
@@ -46,8 +52,8 @@ function EventHeader({
       ) : null}
 
       <div className={styles.metaChips}>
-        <span className={styles.chip}>{t.articles} {event.articles_count}</span>
-        <span className={styles.chip}>{t.sources} {event.sources_count}</span>
+        <span className={styles.chip}>{articleChipText}</span>
+        <span className={styles.chip}>{sourceChipText}</span>
       </div>
     </section>
   );
