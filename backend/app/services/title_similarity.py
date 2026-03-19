@@ -1,12 +1,15 @@
 # backend/app/services/title_similarity.py
 from __future__ import annotations
 
-from rapidfuzz import fuzz
-
-
 import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import List, Set
+
+try:
+    from rapidfuzz import fuzz as rapidfuzz_fuzz
+except ImportError:  # pragma: no cover - exercised indirectly in minimal envs
+    rapidfuzz_fuzz = None
 
 
 # 一组非常保守的停用词：只去掉“几乎永远不承载事件信息”的词
@@ -20,10 +23,24 @@ STOPWORDS: Set[str] = {
     "after", "before", "during", "over", "under",
     "up", "down", "into", "out", "off", "near",
     "new", "latest", "live", "update", "updates", "watch", "video",
+    "it", "say", "says", "third",
 }
 
 # 用正则把“非字母数字”当作分隔符（保留数字：比如“G7”“737”“2025”有时有意义）
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _token_set_ratio_fallback(a: str, b: str) -> float:
+    """
+    一个非常轻量的 rapidfuzz 替代品，只在本地最小环境缺少依赖时兜底。
+    目标不是完全复刻 rapidfuzz，而是保证脚本/测试仍可运行。
+    """
+    a_tokens = sorted(set(a.split()))
+    b_tokens = sorted(set(b.split()))
+    a_norm = " ".join(a_tokens)
+    b_norm = " ".join(b_tokens)
+    return 100.0 * SequenceMatcher(None, a_norm, b_norm).ratio()
+
 
 def fuzz_token_set_ratio(title_a: str, title_b: str) -> float:
     """
@@ -32,7 +49,9 @@ def fuzz_token_set_ratio(title_a: str, title_b: str) -> float:
     """
     a = " ".join(normalize_title(title_a))
     b = " ".join(normalize_title(title_b))
-    return float(fuzz.token_set_ratio(a, b))
+    if rapidfuzz_fuzz is not None:
+        return float(rapidfuzz_fuzz.token_set_ratio(a, b))
+    return float(_token_set_ratio_fallback(a, b))
 
 
 def _simple_stem(token: str) -> str:
@@ -147,4 +166,3 @@ if __name__ == "__main__":
         print("union:", sorted(r.union))
         print("jaccard:", round(r.jaccard, 3))
         print("fuzz_token_set_ratio:", round(fuzz_token_set_ratio(a, b), 1))
-

@@ -4,32 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional, Set
 
-import re
-
-_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
-_STOPWORDS = {
-    "a", "an", "the", "and", "or", "but", "to", "of", "in", "on", "at", "for", "with", "from", "by", "as",
-    "is", "are", "was", "were", "be", "been", "being", "this", "that", "these", "those", "after", "before",
-    "during", "over", "under", "up", "down", "into", "out", "off", "near", "new", "latest", "live", "update",
-    "updates", "watch", "video", "it", "says", "say", "third",
-}
-
-
-def _simple_stem(token: str) -> str:
-    for suf in ("ing", "ed", "es", "s"):
-        if token.endswith(suf) and len(token) > len(suf) + 2:
-            return token[: -len(suf)]
-    return token
-
-
-def normalize_title(title: str) -> list[str]:
-    normalized = _NON_ALNUM_RE.sub(" ", title.strip().lower())
-    tokens = []
-    for tok in normalized.split():
-        if tok in _STOPWORDS or len(tok) <= 1:
-            continue
-        tokens.append(_simple_stem(tok))
-    return tokens
+from app.services.title_similarity import normalize_title
 
 FUZZ_ACCEPT = 85.0
 FUZZ_MAYBE = 60.0
