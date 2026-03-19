@@ -247,7 +247,7 @@ def fetch_events_by_ids(db: Session, event_ids: List[int]) -> List[dict]:
 
 
 def main(do_write: bool = DO_WRITE_DEFAULT) -> None:
-    now_utc = datetime.now(UTC)
+    now_utc = datetime.now(timezone.utc)
     since = (now_utc - timedelta(hours=LOOKBACK_HOURS)).replace(tzinfo=None)
     min_end_time = (now_utc - timedelta(hours=CANDIDATE_WINDOW_HOURS)).replace(tzinfo=None)
 
