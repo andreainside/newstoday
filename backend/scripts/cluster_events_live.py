@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import sys
 import os
-from dataclasses import dataclass
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple, Set
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
+from app.services.event_merge_rules import CandidateScore, decide_action
 from app.services.title_similarity import explain_jaccard, fuzz_token_set_ratio
 
 # Avoid Windows console encoding crashes during logging (e.g., GBK can't encode some chars).
@@ -27,34 +27,18 @@ except Exception:
 LOOKBACK_HOURS = 240
 CANDIDATE_WINDOW_HOURS = 48
 
-FUZZ_ACCEPT = 85.0
-FUZZ_MAYBE = 60.0
-JACCARD_MAYBE = 0.20
-TIME_NEAR_HOURS = 6
-
 # ===== Phase 2.1 Retrieval Control (Top-M articles -> Top-N events) =====
 RETR_WINDOW_DAYS = 7
 TOP_M_ARTICLES = 2000
 TOP_N_EVENTS = 20
 MAX_ARTICLES_PER_EVENT = 20
-VEC_MERGE_SIM = 0.62
-
 
 
 # ==============================================
 
-MAX_ARTICLES = int(os.getenv("CLUSTER_MAX_ARTICLES", "300"))            # 瀹夊叏闃€锛氭渶澶氬鐞嗗灏戠瘒
-DO_WRITE_DEFAULT = False     # 榛樿涓嶅啓搴?
+MAX_ARTICLES = int(os.getenv("CLUSTER_MAX_ARTICLES", "300"))            # 安全阀：最多处理多少篇
+DO_WRITE_DEFAULT = False     # 默认不写库
 
-
-@dataclass
-class CandidateScore:
-    event_id: int
-    rep_title: str
-    end_time: Optional[datetime]
-    fuzz: float
-    jaccard: float
-    vec_sim: float
 
 def touch_event_on_merge(db, event_id: int, article_time: datetime) -> None:
     """
@@ -144,51 +128,13 @@ def pick_best_event(article: dict, candidates: List[dict], closed_ids: Optional[
 
 
 
-def decide_action(best: Optional[CandidateScore], article_time: datetime, event_end_time: Optional[datetime]) -> str:
-    if best is None:
-        return "new"
-    
-    # Phase 2.2A-final: vector strong signal -> merge
-    # 0) safety gate: very low lexical overlap + not-very-strong vec => force NEW
-    # (鏀惧湪鎵€鏈?vector merge 涔嬪墠锛岄槻姝⑩€滆涔夋硾鐩稿叧鈥濊鍚堝苟)
-    if best.vec_sim < 0.74 and best.jaccard <= 0.01 and best.fuzz < 45:
-        return "new"
-
-    # 1) strong vector signal -> merge
-    if best.vec_sim >= VEC_MERGE_SIM:   # 浠嶇劧鏄?0.62
-        return "merge"
-
-    # 2) medium vector signal + light lexical support -> merge
-    #    瑕嗙洊澶ч噺 vec鈮?.56~0.61 & fuzz鈮?5~54 鐨勭湡瀹炲悓浜嬩欢
-    if best.vec_sim >= 0.54 and best.fuzz >= 45:
-        return "merge"
-
-
-    # 寮哄悎骞?
-    if best.fuzz >= FUZZ_ACCEPT:
-        return "merge"
-
-    # 鐏板尯锛氶渶瑕佺浜岃瘉鎹?
-    if best.fuzz >= FUZZ_MAYBE:
-        # 璇佹嵁1锛氬叧閿瘝閲嶅彔
-        if best.jaccard >= JACCARD_MAYBE:
-            return "merge"
-
-        # 璇佹嵁2锛氭椂闂撮潪甯歌繎锛堟敞鎰?end_time 鍙兘涓?None锛?
-        if event_end_time is not None:
-            if abs(article_time - event_end_time) <= timedelta(hours=TIME_NEAR_HOURS):
-                return "merge"
-
-    return "new"
-
-
 def create_event(db: Session, title: str, start_time: datetime, end_time: datetime) -> int:
     q = text("""
         INSERT INTO events (title, representative_title, start_time, end_time, created_at, last_updated_at)
         VALUES (:title, :rep, :start_time, :end_time, :created_at, :last_updated_at)
         RETURNING id;
     """)
-    now_ts = datetime.now(UTC).replace(tzinfo=None)
+    now_ts = datetime.now(timezone.utc).replace(tzinfo=None)
     new_id = db.execute(q, {
         "title": title,
         "rep": title,
@@ -301,7 +247,7 @@ def fetch_events_by_ids(db: Session, event_ids: List[int]) -> List[dict]:
 
 
 def main(do_write: bool = DO_WRITE_DEFAULT) -> None:
-    now_utc = datetime.now(UTC)
+    now_utc = datetime.now(timezone.utc)
     since = (now_utc - timedelta(hours=LOOKBACK_HOURS)).replace(tzinfo=None)
     min_end_time = (now_utc - timedelta(hours=CANDIDATE_WINDOW_HOURS)).replace(tzinfo=None)
 
@@ -337,7 +283,7 @@ def main(do_write: bool = DO_WRITE_DEFAULT) -> None:
 
 
                     article_time = a["published_at"]  # timestamp without time zone -> naive datetime
-                    action = decide_action(best, article_time, best.end_time if best else None)
+                    action = decide_action(best, article_time, best.end_time if best else None, article_title=a["title"])
 
                     print(f"{i:02d}. article_id={a['id']}  time={a['published_at']}  title={a['title'][:80]!r}")
                     if best:
@@ -380,7 +326,7 @@ def main(do_write: bool = DO_WRITE_DEFAULT) -> None:
                                 "representative_title": a["title"],
                                 "start_time": published_at,
                                 "end_time": published_at,
-                                "created_at": datetime.now(UTC).replace(tzinfo=None),
+                                "created_at": datetime.now(timezone.utc).replace(tzinfo=None),
                             },
                         )
                         print(f"    [write] created event_id={new_event_id} + linked article")
@@ -424,7 +370,7 @@ def main(do_write: bool = DO_WRITE_DEFAULT) -> None:
                 best = pick_best_event(a, candidates, closed_ids=closed_ids) if candidates else None
 
                 article_time = a["published_at"]
-                action = decide_action(best, article_time, best.end_time if best else None)
+                action = decide_action(best, article_time, best.end_time if best else None, article_title=a["title"])
 
                 print(f"{i:02d}. article_id={a['id']}  time={a['published_at']}  title={a['title'][:80]!r}")
                 if best:
