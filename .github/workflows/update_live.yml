@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements.live-update.txt
 
       - name: Cache HuggingFace models
         uses: actions/cache@v4
@@ -45,7 +45,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: backend
-        run: pip install --disable-pip-version-check --prefer-binary -r requirements.txt
+        run: pip install --disable-pip-version-check --prefer-binary -r requirements.live-update.txt
 
       - name: Run live update
         working-directory: backend
